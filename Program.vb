@@ -123,14 +123,15 @@ Module Program
 
                 If action = "upload" AndAlso request.HttpMethod = "POST" Then
                     uploadSong(request, action, jsonResponse, statusCode, userId.Value)
-                End if
 
-                ' Ruta no encontrada
-                jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
-                statusCode = HttpStatusCode.NotFound
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "PATCH" Then
+                    updateSong(request, action, jsonResponse, statusCode, userId.Value)
 
-
-            ElseIf resource = "album" Then
+                Else
+                    ' Ruta no encontrada
+                    jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
+                    statusCode = HttpStatusCode.NotFound
+                End If
 
                 ' Ruta no encontrada
                 jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
@@ -308,6 +309,26 @@ Module Program
             End Using
         End Using
         Return results
+    End Function
+
+    ''' <summary>
+    ''' Recupera artista principal y colaboradores desde una tabla de relación
+    ''' </summary>
+    Function GetArtistCollaborators(tableName As String, idFieldName As String, idValue As Integer, ByRef artistId As String) As List(Of Integer)
+        Dim collaborators As New List(Of Integer)
+        Using cmd = db.CreateCommand($"SELECT idartista, ft FROM {tableName} WHERE {idFieldName} = @id")
+            cmd.Parameters.AddWithValue("@id", idValue)
+            Using reader = cmd.ExecuteReader()
+                While reader.Read()
+                    If reader.GetBoolean(1) = False Then
+                        artistId = reader.GetInt32(0).ToString()
+                    Else
+                        collaborators.Add(reader.GetInt32(0))
+                    End If
+                End While
+            End Using
+        End Using
+        Return collaborators
     End Function
 
     ''' <summary>
@@ -535,6 +556,158 @@ Module Program
 
         Catch ex As Exception
             jsonResponse = GenerateErrorResponse("500", "Error al crear la canción: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub updateSong(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim songId = ValidateNumericId(action, "canción", jsonResponse, statusCode)
+            If Not songId.HasValue Then Return
+
+            ' Leer el body del request
+            Dim body As String
+            Using reader As New StreamReader(request.InputStream, request.ContentEncoding)
+                body = reader.ReadToEnd()
+            End Using
+
+            Dim songData = JsonSerializer.Deserialize(Of Dictionary(Of String, JsonElement))(body)
+
+            ' Validar price si está presente
+            If songData.ContainsKey("price") Then
+                Dim price As Decimal = songData("price").GetDecimal()
+                If price <= 0 Then
+                    jsonResponse = GenerateErrorResponse("400", "El precio debe ser un valor positivo")
+                    statusCode = HttpStatusCode.BadRequest
+                    Return
+                End If
+            End If
+
+            ' Construir UPDATE dinámico solo con los campos presentes
+            ' NOTA: albumId (albumog) NO se puede modificar una vez creada la canción
+            Dim updates As New List(Of String)
+            Dim cmdText As String = "UPDATE canciones SET "
+
+            Using cmd = db.CreateCommand("")
+                If songData.ContainsKey("title") Then
+                    updates.Add("titulo = @titulo")
+                    cmd.Parameters.AddWithValue("@titulo", songData("title").GetString())
+                End If
+                If songData.ContainsKey("description") Then
+                    updates.Add("descripcion = @descripcion")
+                    cmd.Parameters.AddWithValue("@descripcion", If(songData("description").ValueKind = JsonValueKind.Null, DBNull.Value, CType(songData("description").GetString(), Object)))
+                End If
+                If songData.ContainsKey("cover") Then
+                    ' Obtener la ruta anterior para eliminar el archivo viejo
+                    Dim oldCoverPath As String = Nothing
+                    Using cmdOld = db.CreateCommand("SELECT cover FROM canciones WHERE idcancion = @id")
+                        cmdOld.Parameters.AddWithValue("@id", songId)
+                        Dim result As Object = cmdOld.ExecuteScalar()
+                        If result IsNot Nothing AndAlso Not IsDBNull(result) Then
+                            oldCoverPath = result.ToString()
+                        End If
+                    End Using
+
+                    ' Guardar nueva imagen y obtener ruta
+                    Dim newCoverPath As String = SaveBase64Image(songData("cover").GetString(), "song", songId)
+                    If newCoverPath IsNot Nothing Then
+                        updates.Add("cover = @cover")
+                        cmd.Parameters.AddWithValue("@cover", newCoverPath)
+
+                        ' Eliminar archivo viejo si existe y es diferente
+                        If oldCoverPath IsNot Nothing AndAlso oldCoverPath <> newCoverPath Then
+                            DeleteImageFile(oldCoverPath)
+                        End If
+                    End If
+                End If
+                If songData.ContainsKey("price") Then
+                    updates.Add("precio = @precio")
+                    cmd.Parameters.AddWithValue("@precio", songData("price").GetDecimal())
+                End If
+                If songData.ContainsKey("releaseDate") Then
+                    updates.Add("fechalanzamiento = @fecha")
+                    cmd.Parameters.AddWithValue("@fecha", Date.Parse(songData("releaseDate").GetString()))
+                End If
+                If songData.ContainsKey("trackId") Then
+                    updates.Add("track = @track")
+                    cmd.Parameters.AddWithValue("@track", songData("trackId").GetInt32())
+                End If
+                If songData.ContainsKey("duration") Then
+                    updates.Add("duracion = @duracion")
+                    cmd.Parameters.AddWithValue("@duracion", songData("duration").GetInt32())
+                End If
+
+                If updates.Count > 0 Then
+                    cmd.CommandText = cmdText & String.Join(", ", updates) & " WHERE idcancion = @id"
+                    cmd.Parameters.AddWithValue("@id", songId)
+                    cmd.ExecuteNonQuery()
+                End If
+            End Using
+
+            ' Actualizar géneros si están presentes
+            If songData.ContainsKey("genres") Then
+                ' Validar que todos los géneros existan
+                For Each genreElement In songData("genres").EnumerateArray()
+                    Dim genreId As Integer = genreElement.GetInt32()
+                    Dim genreExists As Boolean = False
+                    Using cmd = db.CreateCommand("SELECT COUNT(*) FROM generos WHERE idgenero = @idgenero")
+                        cmd.Parameters.AddWithValue("@idgenero", genreId)
+                        Dim count As Integer = CInt(cmd.ExecuteScalar())
+                        genreExists = count > 0
+                    End Using
+
+                    If Not genreExists Then
+                        jsonResponse = GenerateErrorResponse("422", $"El género con ID {genreId} no existe")
+                        statusCode = 422 ' Unprocessable Entity
+                        Return
+                    End If
+                Next
+
+                Using cmd = db.CreateCommand("DELETE FROM generoscanciones WHERE idcancion = @id")
+                    cmd.Parameters.AddWithValue("@id", songId)
+                    cmd.ExecuteNonQuery()
+                End Using
+
+                For Each genreElement In songData("genres").EnumerateArray()
+                    Using cmd = db.CreateCommand("INSERT INTO generoscanciones (idcancion, idgenero) VALUES (@idcancion, @idgenero)")
+                        cmd.Parameters.AddWithValue("@idcancion", songId)
+                        cmd.Parameters.AddWithValue("@idgenero", genreElement.GetInt32())
+                        cmd.ExecuteNonQuery()
+                    End Using
+                Next
+            End If
+
+            ' Actualizar colaboradores si están presentes
+            If songData.ContainsKey("collaborators") Then
+                Using cmd = db.CreateCommand("DELETE FROM autorescanciones WHERE idcancion = @id AND ft = true")
+                    cmd.Parameters.AddWithValue("@id", songId)
+                    cmd.ExecuteNonQuery()
+                End Using
+
+                For Each collabElement In songData("collaborators").EnumerateArray()
+                    Using cmd = db.CreateCommand("INSERT INTO autorescanciones (idartista, idcancion, ft) VALUES (@idartista, @idcancion, @ft)")
+                        cmd.Parameters.AddWithValue("@idartista", collabElement.GetInt32())
+                        cmd.Parameters.AddWithValue("@idcancion", songId)
+                        cmd.Parameters.AddWithValue("@ft", True)
+                        cmd.ExecuteNonQuery()
+                    End Using
+                Next
+            End If
+
+            ' Actualizar orden en álbum si está presente
+            If songData.ContainsKey("albumOrder") AndAlso songData("albumOrder").ValueKind <> JsonValueKind.Null Then
+                Using cmd = db.CreateCommand("UPDATE cancionesalbumes SET tracknumber = @tracknumber WHERE idcancion = @id")
+                    cmd.Parameters.AddWithValue("@tracknumber", songData("albumOrder").GetInt32())
+                    cmd.Parameters.AddWithValue("@id", songId)
+                    cmd.ExecuteNonQuery()
+                End Using
+            End If
+
+            jsonResponse = ""
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al actualizar la canción: " & ex.Message)
             statusCode = HttpStatusCode.InternalServerError
         End Try
     End Sub
