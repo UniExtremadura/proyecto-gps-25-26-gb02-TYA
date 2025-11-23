@@ -1,0 +1,9 @@
+.vs/
+bin/
+obj/
+static/album/*
+static/song/*
+static/artist/*
+static/merch/*
+pruebas.py
+Program copy.vb
