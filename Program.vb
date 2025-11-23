@@ -955,6 +955,21 @@ Module Program
                 Next
             End If
 
+            ' Vincular canciones al álbum
+            If albumData.ContainsKey("songs") Then
+                Dim trackNumber As Integer = 1
+                For Each songElement In albumData("songs").EnumerateArray()
+                    Dim songId As Integer = songElement.GetInt32()
+                    Using cmd = db.CreateCommand("INSERT INTO cancionesalbumes (idcancion, idalbum, tracknumber) VALUES (@idcancion, @idalbum, @tracknumber) ON CONFLICT (idcancion, idalbum) DO UPDATE SET tracknumber = @tracknumber")
+                        cmd.Parameters.AddWithValue("@idcancion", songId)
+                        cmd.Parameters.AddWithValue("@idalbum", newAlbumId)
+                        cmd.Parameters.AddWithValue("@tracknumber", trackNumber)
+                        cmd.ExecuteNonQuery()
+                    End Using
+                    trackNumber += 1
+                Next
+            End If
+
             jsonResponse = ConvertToJson(New Dictionary(Of String, Object) From {{"albumId", newAlbumId}})
             statusCode = HttpStatusCode.OK
 
