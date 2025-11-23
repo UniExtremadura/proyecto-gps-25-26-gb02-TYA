@@ -169,6 +169,12 @@ Module Program
                 If action = "upload" AndAlso request.HttpMethod = "POST" Then
                     uploadMerch(request, action, jsonResponse, statusCode, userId.Value)
 
+                ElseIf action = "list" AndAlso request.HttpMethod = "GET" Then
+                    listMerch(request, action, jsonResponse, statusCode)
+
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "GET" Then
+                    getMerch(request, action, jsonResponse, statusCode)
+
                 Else
                     ' Ruta no encontrada
                     jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
@@ -1345,6 +1351,117 @@ Module Program
 
         Catch ex As Exception
             jsonResponse = GenerateErrorResponse("500", "Error al crear el merchandising: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub getMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            Dim merchId = ValidateNumericId(action, "merchandising", jsonResponse, statusCode)
+            If Not merchId.HasValue Then Return
+
+            Dim merchData = GetMerchData(merchId.Value)
+            If merchData Is Nothing Then
+                jsonResponse = ""
+                statusCode = HttpStatusCode.NotFound
+                Return
+            End If
+
+            jsonResponse = ConvertToJson(merchData)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al obtener el merchandising: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Function GetMerchData(merchId As Integer) As Dictionary(Of String, Object)
+        Try
+            Dim schema As New Dictionary(Of String, Object) From {
+                {"merchId", merchId},
+                {"title", Nothing},
+                {"artistId", Nothing},
+                {"collaborators", Nothing},
+                {"releaseDate", Nothing},
+                {"description", Nothing},
+                {"price", Nothing},
+                {"cover", Nothing}
+            }
+
+            ' Recuperar datos del merchandising
+            Using cmd = db.CreateCommand("SELECT titulo, descripcion, precio, cover, fechaLanzamiento FROM merch WHERE idmerch = @id")
+                cmd.Parameters.AddWithValue("@id", merchId)
+                Using reader = cmd.ExecuteReader()
+                    If reader.HasRows Then
+                        While reader.Read()
+                            schema("title") = reader.GetString(0)
+                            schema("description") = reader.GetString(1)
+                            schema("price") = reader.GetDecimal(2).ToString()
+                            schema("cover") = GetImagePath(reader("cover"))
+                            schema("releaseDate") = reader.GetDateTime(4).ToString("yyyy-MM-dd")
+                        End While
+                    Else
+                        Return Nothing
+                    End If
+                End Using
+            End Using
+
+            ' Recuperar artista creador y colaboradores
+            Dim artistId As String = Nothing
+            Dim collaborators = GetArtistCollaborators("AutoresMerch", "idmerch", merchId, artistId)
+            schema("artistId") = artistId
+            schema("collaborators") = collaborators
+
+            Return schema
+
+        Catch ex As Exception
+            Console.WriteLine($"Error al obtener datos de merchandising {merchId}: {ex.Message}")
+            Return Nothing
+        End Try
+    End Function
+
+    Sub listMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            ' Obtener parámetro de lista de IDs
+            Dim idsParam As String = request.QueryString("ids")
+            If String.IsNullOrEmpty(idsParam) Then
+                jsonResponse = GenerateErrorResponse("400", "Parámetro 'ids' requerido")
+                statusCode = HttpStatusCode.BadRequest
+                Return
+            End If
+
+            ' Dividir los IDs por comas
+            Dim idStrings As String() = idsParam.Split(","c)
+            Dim merchIds As New List(Of Integer)
+
+            ' Parsear y validar los IDs
+            For Each idStr In idStrings
+                Dim merchId As Integer
+                If Integer.TryParse(idStr.Trim(), merchId) Then
+                    merchIds.Add(merchId)
+                Else
+                    jsonResponse = GenerateErrorResponse("400", "ID inválido: " & idStr)
+                    statusCode = HttpStatusCode.BadRequest
+                    Return
+                End If
+            Next
+
+            ' Obtener los datos de todos los merchandising
+            Dim results As New List(Of Dictionary(Of String, Object))
+
+            For Each merchId In merchIds
+                Dim merchData As Dictionary(Of String, Object) = GetMerchData(merchId)
+                If merchData IsNot Nothing Then
+                    results.Add(merchData)
+                End If
+            Next
+
+            jsonResponse = ConvertToJson(results)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al obtener merchandising: " & ex.Message)
             statusCode = HttpStatusCode.InternalServerError
         End Try
     End Sub
