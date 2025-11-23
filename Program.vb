@@ -139,9 +139,17 @@ Module Program
                     statusCode = HttpStatusCode.NotFound
                 End If
 
-                ' Ruta no encontrada
-                jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
-                statusCode = HttpStatusCode.NotFound
+
+            ElseIf resource = "album" Then
+
+                If action = "upload" AndAlso request.HttpMethod = "POST" Then
+                    uploadAlbum(request, action, jsonResponse, statusCode, userId.Value)
+
+                Else
+                    ' Ruta no encontrada
+                    jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
+                    statusCode = HttpStatusCode.NotFound
+                End If
 
 
             ElseIf resource = "merch" Then
@@ -839,6 +847,119 @@ Module Program
 
         Catch ex As Exception
             jsonResponse = GenerateErrorResponse("500", "Error al obtener datos de canción: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub uploadAlbum(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim body As String
+            Using reader As New StreamReader(request.InputStream, request.ContentEncoding)
+                body = reader.ReadToEnd()
+            End Using
+
+            Dim albumData = JsonSerializer.Deserialize(Of Dictionary(Of String, JsonElement))(body)
+
+            ' Validar campos requeridos
+            If Not albumData.ContainsKey("title") OrElse
+               Not albumData.ContainsKey("songs") OrElse Not albumData.ContainsKey("cover") OrElse
+               Not albumData.ContainsKey("price") Then
+                jsonResponse = GenerateErrorResponse("400", "Faltan campos requeridos")
+                statusCode = HttpStatusCode.BadRequest
+                Return
+            End If
+
+            Dim title As String = albumData("title").GetString()
+            Dim cover As String = If(albumData.ContainsKey("cover") AndAlso albumData("cover").ValueKind <> JsonValueKind.Null AndAlso Not String.IsNullOrWhiteSpace(albumData("cover").GetString()), albumData("cover").GetString(), Nothing)
+            Dim price As Decimal = albumData("price").GetDecimal()
+            Dim releaseDate As String = If(albumData.ContainsKey("releaseDate"), albumData("releaseDate").GetString(), DateTime.Now.ToString("yyyy-MM-dd"))
+            Dim description As String = If(albumData.ContainsKey("description"), albumData("description").GetString(), "")
+
+            ' Validar que price sea positivo
+            If price <= 0 Then
+                jsonResponse = GenerateErrorResponse("400", "El precio debe ser un valor positivo")
+                statusCode = HttpStatusCode.BadRequest
+                Return
+            End If
+
+            ' Validar que todas las canciones existan
+            If albumData.ContainsKey("songs") Then
+                For Each songElement In albumData("songs").EnumerateArray()
+                    Dim songId As Integer = songElement.GetInt32()
+                    Dim songExists As Boolean = False
+                    Using cmd = db.CreateCommand("SELECT COUNT(*) FROM canciones WHERE idcancion = @idcancion")
+                        cmd.Parameters.AddWithValue("@idcancion", songId)
+                        Dim count As Integer = CInt(cmd.ExecuteScalar())
+                        songExists = count > 0
+                    End Using
+
+                    If Not songExists Then
+                        jsonResponse = GenerateErrorResponse("422", $"La canción con ID {songId} no existe")
+                        statusCode = 422 ' Unprocessable Entity
+                        Return
+                    End If
+                Next
+            End If
+
+            ' Insertar álbum con cover por defecto
+            Dim newAlbumId As Integer
+            Using cmd = db.CreateCommand("INSERT INTO albumes (titulo, descripcion, cover, fechalanzamiento, precio, precioauto) VALUES (@titulo, @descripcion, @cover, @fecha, @precio, @precioauto) RETURNING idalbum")
+                cmd.Parameters.AddWithValue("@titulo", title)
+                cmd.Parameters.AddWithValue("@descripcion", If(description, DBNull.Value))
+                cmd.Parameters.AddWithValue("@cover", "/album/default.png")
+                cmd.Parameters.AddWithValue("@fecha", Date.Parse(releaseDate))
+                cmd.Parameters.AddWithValue("@precio", price)
+                cmd.Parameters.AddWithValue("@precioauto", False)
+                newAlbumId = CInt(cmd.ExecuteScalar())
+            End Using
+
+            ' Guardar imagen y actualizar cover con la ruta si se proporcionó
+            If cover IsNot Nothing Then
+                Dim coverPath As String = SaveBase64Image(cover, "album", newAlbumId)
+                If coverPath IsNot Nothing Then
+                    Using cmd = db.CreateCommand("UPDATE albumes SET cover = @cover WHERE idalbum = @id")
+                        cmd.Parameters.AddWithValue("@cover", coverPath)
+                        cmd.Parameters.AddWithValue("@id", newAlbumId)
+                        cmd.ExecuteNonQuery()
+                    End Using
+                End If
+            End If
+
+            ' Obtener el ID del artista asociado al usuario autenticado
+            Dim artistId As Integer? = GetArtistIdByUserId(userId)
+
+            If Not artistId.HasValue Then
+                jsonResponse = GenerateErrorResponse("403", "El usuario no tiene un artista asociado")
+                statusCode = HttpStatusCode.Forbidden
+                Return
+            End If
+
+            ' Insertar al artista principal (el usuario autenticado) - NO es colaborador (ft = false)
+            Using cmd = db.CreateCommand("INSERT INTO autoresalbumes (idartista, idalbum, ft) VALUES (@idartista, @idalbum, @ft)")
+                cmd.Parameters.AddWithValue("@idartista", artistId.Value)
+                cmd.Parameters.AddWithValue("@idalbum", newAlbumId)
+                cmd.Parameters.AddWithValue("@ft", False) ' No es colaborador, es el artista principal
+                cmd.ExecuteNonQuery()
+            End Using
+
+            ' Insertar colaboradores (artistas con ft = true)
+            If albumData.ContainsKey("collaborators") Then
+                For Each collabElement In albumData("collaborators").EnumerateArray()
+                    Dim collabArtistId As Integer = collabElement.GetInt32()
+                    Using cmd = db.CreateCommand("INSERT INTO autoresalbumes (idartista, idalbum, ft) VALUES (@idartista, @idalbum, @ft)")
+                        cmd.Parameters.AddWithValue("@idartista", collabArtistId)
+                        cmd.Parameters.AddWithValue("@idalbum", newAlbumId)
+                        cmd.Parameters.AddWithValue("@ft", True) ' Es colaborador
+                        cmd.ExecuteNonQuery()
+                    End Using
+                Next
+            End If
+
+            jsonResponse = ConvertToJson(New Dictionary(Of String, Object) From {{"albumId", newAlbumId}})
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al crear el álbum: " & ex.Message)
             statusCode = HttpStatusCode.InternalServerError
         End Try
     End Sub
