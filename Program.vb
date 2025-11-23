@@ -160,6 +160,9 @@ Module Program
                 ElseIf IsNumeric(action) AndAlso request.HttpMethod = "PATCH" Then
                     updateAlbum(request, action, jsonResponse, statusCode, userId.Value)
 
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "DELETE" Then
+                    deleteAlbum(request, action, jsonResponse, statusCode, userId.Value)
+
                 Else
                     ' Ruta no encontrada
                     jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
@@ -1394,6 +1397,30 @@ Module Program
 
         Catch ex As Exception
             jsonResponse = GenerateErrorResponse("500", "Error al actualizar el álbum: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub deleteAlbum(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim albumId = ValidateNumericId(action, "álbum", jsonResponse, statusCode)
+            If Not albumId.HasValue Then Return
+
+            ' Obtener la ruta de la imagen antes de eliminar el registro
+            Dim coverPath = GetImagePathBeforeDelete("albumes", "cover", "idalbum", albumId.Value)
+
+            ' Antes de eliminar el álbum, poner albumog a NULL en todas las canciones
+            ' que tengan este álbum como álbum original (se convierten en singles)
+            Using cmd = db.CreateCommand("UPDATE canciones SET albumog = NULL WHERE albumog = @id")
+                cmd.Parameters.AddWithValue("@id", albumId.Value)
+                cmd.ExecuteNonQuery()
+            End Using
+
+            ' Eliminar álbum (las relaciones en cancionesalbumes se eliminan en cascada)
+            DeleteRecordWithImage("albumes", "idalbum", albumId.Value, coverPath, "Álbum", jsonResponse, statusCode)
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al eliminar el álbum: " & ex.Message)
             statusCode = HttpStatusCode.InternalServerError
         End Try
     End Sub
