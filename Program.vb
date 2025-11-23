@@ -154,9 +154,14 @@ Module Program
 
             ElseIf resource = "merch" Then
 
-                ' Ruta no encontrada
-                jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
-                statusCode = HttpStatusCode.NotFound
+                If action = "upload" AndAlso request.HttpMethod = "POST" Then
+                    uploadMerch(request, action, jsonResponse, statusCode, userId.Value)
+
+                Else
+                    ' Ruta no encontrada
+                    jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
+                    statusCode = HttpStatusCode.NotFound
+                End If
 
 
             ElseIf resource = "artist" Then
@@ -975,6 +980,98 @@ Module Program
 
         Catch ex As Exception
             jsonResponse = GenerateErrorResponse("500", "Error al crear el álbum: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub uploadMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim body As String
+            Using reader As New StreamReader(request.InputStream, request.ContentEncoding)
+                body = reader.ReadToEnd()
+            End Using
+
+            Dim merchData = JsonSerializer.Deserialize(Of Dictionary(Of String, JsonElement))(body)
+
+            ' Validar campos requeridos
+            If Not merchData.ContainsKey("title") OrElse Not merchData.ContainsKey("price") OrElse
+               Not merchData.ContainsKey("cover") Then
+                jsonResponse = GenerateErrorResponse("400", "Faltan campos requeridos")
+                statusCode = HttpStatusCode.BadRequest
+                Return
+            End If
+
+            Dim title As String = merchData("title").GetString()
+            Dim description As String = If(merchData.ContainsKey("description"), merchData("description").GetString(), "")
+            Dim price As Decimal = merchData("price").GetDecimal()
+            Dim cover As String = If(merchData.ContainsKey("cover") AndAlso merchData("cover").ValueKind <> JsonValueKind.Null AndAlso Not String.IsNullOrWhiteSpace(merchData("cover").GetString()), merchData("cover").GetString(), Nothing)
+            Dim releaseDate As String = If(merchData.ContainsKey("releaseDate"), merchData("releaseDate").GetString(), DateTime.Now.ToString("yyyy-MM-dd"))
+
+            ' Validar que price sea positivo
+            If price <= 0 Then
+                jsonResponse = GenerateErrorResponse("400", "El precio debe ser un valor positivo")
+                statusCode = HttpStatusCode.BadRequest
+                Return
+            End If
+
+            ' Insertar merchandising con cover por defecto
+            Dim newMerchId As Integer
+            Using cmd = db.CreateCommand("INSERT INTO merch (titulo, descripcion, cover, fechalanzamiento, precio) VALUES (@titulo, @descripcion, @cover, @fecha, @precio) RETURNING idmerch")
+                cmd.Parameters.AddWithValue("@titulo", title)
+                cmd.Parameters.AddWithValue("@descripcion", description)
+                cmd.Parameters.AddWithValue("@cover", "/merch/default.png")
+                cmd.Parameters.AddWithValue("@fecha", Date.Parse(releaseDate))
+                cmd.Parameters.AddWithValue("@precio", price)
+                newMerchId = CInt(cmd.ExecuteScalar())
+            End Using
+
+            ' Guardar imagen y actualizar cover con la ruta si se proporcionó
+            If cover IsNot Nothing Then
+                Dim coverPath As String = SaveBase64Image(cover, "merch", newMerchId)
+                If coverPath IsNot Nothing Then
+                    Using cmd = db.CreateCommand("UPDATE merch SET cover = @cover WHERE idmerch = @id")
+                        cmd.Parameters.AddWithValue("@cover", coverPath)
+                        cmd.Parameters.AddWithValue("@id", newMerchId)
+                        cmd.ExecuteNonQuery()
+                    End Using
+                End If
+            End If
+
+            ' Obtener el ID del artista asociado al usuario autenticado
+            Dim artistId As Integer? = GetArtistIdByUserId(userId)
+
+            If Not artistId.HasValue Then
+                jsonResponse = GenerateErrorResponse("403", "El usuario no tiene un artista asociado")
+                statusCode = HttpStatusCode.Forbidden
+                Return
+            End If
+
+            ' Insertar al artista principal (el usuario autenticado) - NO es colaborador (ft = false)
+            Using cmd = db.CreateCommand("INSERT INTO AutoresMerch (idartista, idmerch, ft) VALUES (@idartista, @idmerch, @ft)")
+                cmd.Parameters.AddWithValue("@idartista", artistId.Value)
+                cmd.Parameters.AddWithValue("@idmerch", newMerchId)
+                cmd.Parameters.AddWithValue("@ft", False) ' No es colaborador, es el artista principal
+                cmd.ExecuteNonQuery()
+            End Using
+
+            ' Insertar colaboradores (artistas con ft = true)
+            If merchData.ContainsKey("collaborators") Then
+                For Each collabElement In merchData("collaborators").EnumerateArray()
+                    Dim collabArtistId As Integer = collabElement.GetInt32()
+                    Using cmd = db.CreateCommand("INSERT INTO AutoresMerch (idartista, idmerch, ft) VALUES (@idartista, @idmerch, @ft)")
+                        cmd.Parameters.AddWithValue("@idartista", collabArtistId)
+                        cmd.Parameters.AddWithValue("@idmerch", newMerchId)
+                        cmd.Parameters.AddWithValue("@ft", True) ' Es colaborador
+                        cmd.ExecuteNonQuery()
+                    End Using
+                Next
+            End If
+
+            jsonResponse = ConvertToJson(New Dictionary(Of String, Object) From {{"merchId", newMerchId}})
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al crear el merchandising: " & ex.Message)
             statusCode = HttpStatusCode.InternalServerError
         End Try
     End Sub
