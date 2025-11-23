@@ -124,6 +124,9 @@ Module Program
                 If action = "upload" AndAlso request.HttpMethod = "POST" Then
                     uploadSong(request, action, jsonResponse, statusCode, userId.Value)
 
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "GET" Then
+                    getSong(request, action, jsonResponse, statusCode)
+
                 ElseIf IsNumeric(action) AndAlso request.HttpMethod = "PATCH" Then
                     updateSong(request, action, jsonResponse, statusCode, userId.Value)
 
@@ -332,6 +335,93 @@ Module Program
             End Using
         End Using
         Return collaborators
+    End Function
+
+    ' Función auxiliar para obtener datos completos de una canción
+    Function GetSongData(songId As Integer) As Dictionary(Of String, Object)
+        Try
+            Dim schema As New Dictionary(Of String, Object) From {
+                {"songId", songId},
+                {"title", Nothing},
+                {"artistId", Nothing},
+                {"collaborators", Nothing},
+                {"releaseDate", Nothing},
+                {"description", Nothing},
+                {"duration", Nothing},
+                {"genres", Nothing},
+                {"cover", Nothing},
+                {"price", Nothing},
+                {"albumId", Nothing},
+                {"trackId", Nothing},
+                {"albumOrder", Nothing},
+                {"linked_albums", Nothing}
+            }
+
+            ' Recuperar datos básicos
+            Using cmd = db.CreateCommand("SELECT titulo, descripcion, cover, duracion, fechalanzamiento, precio, track, albumog FROM canciones WHERE idcancion = @id")
+                cmd.Parameters.AddWithValue("@id", songId)
+                Using reader = cmd.ExecuteReader()
+                    If reader.HasRows Then
+                        While reader.Read()
+                            schema("title") = reader.GetString(0)
+                            schema("description") = If(reader.IsDBNull(1), Nothing, reader.GetString(1))
+                            schema("cover") = GetImagePath(reader("cover"))
+                            schema("duration") = reader.GetInt32(3).ToString()
+                            schema("releaseDate") = reader.GetDateTime(4).ToString("yyyy-MM-dd")
+                            schema("price") = reader.GetDecimal(5).ToString()
+                            schema("trackId") = reader.GetInt32(6).ToString()
+                            schema("albumId") = If(reader.IsDBNull(7), Nothing, CType(reader.GetInt32(7), Object))
+                        End While
+                    Else
+                        Return Nothing
+                    End If
+                End Using
+            End Using
+
+            ' Recuperar autor y colaboradores
+            Dim artistId As String = Nothing
+            Dim collaborators = GetArtistCollaborators("autorescanciones", "idcancion", songId, artistId)
+            schema("artistId") = artistId
+            schema("collaborators") = collaborators
+
+            ' Recuperar géneros
+            Dim genres As New List(Of String)
+            Dim genreIds = GetIdList("SELECT idgenero FROM generoscanciones WHERE idcancion = @id", "@id", songId)
+            For Each genreId In genreIds
+                genres.Add(genreId.ToString())
+            Next
+            schema("genres") = genres
+
+            ' Recuperar albumOrder del álbum original (si existe)
+            If schema("albumId") IsNot Nothing Then
+                Using cmd = db.CreateCommand("SELECT tracknumber FROM cancionesalbumes WHERE idcancion = @id AND idalbum = @albumog")
+                    cmd.Parameters.AddWithValue("@id", songId)
+                    cmd.Parameters.AddWithValue("@albumog", CInt(schema("albumId")))
+                    Using reader = cmd.ExecuteReader()
+                        If reader.Read() Then
+                            schema("albumOrder") = reader.GetInt32(0)
+                        End If
+                    End Using
+                End Using
+            End If
+
+            ' Recuperar álbumes enlazados (linked_albums)
+            Dim linkedAlbums As New List(Of Integer)
+            Dim albumOgId As Object = schema("albumId")
+            Dim allLinkedAlbums = GetIdList("SELECT idalbum FROM cancionesalbumes WHERE idcancion = @id", "@id", songId)
+            For Each linkedAlbumId In allLinkedAlbums
+                If albumOgId Is Nothing OrElse linkedAlbumId <> CInt(albumOgId) Then
+                    linkedAlbums.Add(linkedAlbumId)
+                End If
+            Next
+            schema("linked_albums") = linkedAlbums
+
+            Return schema
+
+        Catch ex As Exception
+            Console.WriteLine($"Error al obtener datos de canción {songId}: {ex.Message}")
+            Return Nothing
+        End Try
     End Function
 
     ''' <summary>
@@ -728,6 +818,27 @@ Module Program
 
         Catch ex As Exception
             jsonResponse = GenerateErrorResponse("500", "Error al eliminar la canción: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub getSong(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            Dim songId = ValidateNumericId(action, "canción", jsonResponse, statusCode)
+            If Not songId.HasValue Then Return
+
+            Dim songData = GetSongData(songId.Value)
+            If songData Is Nothing Then
+                jsonResponse = ""
+                statusCode = HttpStatusCode.NotFound
+                Return
+            End If
+
+            jsonResponse = ConvertToJson(songData)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al obtener datos de canción: " & ex.Message)
             statusCode = HttpStatusCode.InternalServerError
         End Try
     End Sub
