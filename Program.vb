@@ -157,6 +157,9 @@ Module Program
                 ElseIf IsNumeric(action) AndAlso request.HttpMethod = "GET" Then
                     getAlbum(request, action, jsonResponse, statusCode)
 
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "PATCH" Then
+                    updateAlbum(request, action, jsonResponse, statusCode, userId.Value)
+
                 Else
                     ' Ruta no encontrada
                     jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
@@ -1253,6 +1256,144 @@ Module Program
 
         Catch ex As Exception
             jsonResponse = GenerateErrorResponse("500", "Error al obtener el álbum: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub updateAlbum(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim albumId = ValidateNumericId(action, "álbum", jsonResponse, statusCode)
+            If Not albumId.HasValue Then Return
+
+            Dim body As String
+            Using reader As New StreamReader(request.InputStream, request.ContentEncoding)
+                body = reader.ReadToEnd()
+            End Using
+
+            Dim albumData = JsonSerializer.Deserialize(Of Dictionary(Of String, JsonElement))(body)
+
+            ' Validar price si está presente
+            If albumData.ContainsKey("price") Then
+                Dim price As Decimal = albumData("price").GetDecimal()
+                If price <= 0 Then
+                    jsonResponse = GenerateErrorResponse("400", "El precio debe ser un valor positivo")
+                    statusCode = HttpStatusCode.BadRequest
+                    Return
+                End If
+            End If
+
+            ' Validar que todas las canciones existan si se van a actualizar
+            If albumData.ContainsKey("songs") Then
+                For Each songElement In albumData("songs").EnumerateArray()
+                    Dim songId As Integer = songElement.GetInt32()
+                    Dim songExists As Boolean = False
+                    Using cmd = db.CreateCommand("SELECT COUNT(*) FROM canciones WHERE idcancion = @idcancion")
+                        cmd.Parameters.AddWithValue("@idcancion", songId)
+                        Dim count As Integer = CInt(cmd.ExecuteScalar())
+                        songExists = count > 0
+                    End Using
+
+                    If Not songExists Then
+                        jsonResponse = GenerateErrorResponse("422", $"La canción con ID {songId} no existe")
+                        statusCode = 422 ' Unprocessable Entity
+                        Return
+                    End If
+                Next
+            End If
+
+            ' Construir UPDATE dinámico
+            Dim updates As New List(Of String)
+            Dim cmdText As String = "UPDATE albumes SET "
+
+            Using cmd = db.CreateCommand("")
+                If albumData.ContainsKey("title") Then
+                    updates.Add("titulo = @titulo")
+                    cmd.Parameters.AddWithValue("@titulo", albumData("title").GetString())
+                End If
+                If albumData.ContainsKey("description") Then
+                    updates.Add("descripcion = @descripcion")
+                    cmd.Parameters.AddWithValue("@descripcion", If(albumData("description").ValueKind = JsonValueKind.Null, DBNull.Value, CType(albumData("description").GetString(), Object)))
+                End If
+                If albumData.ContainsKey("cover") Then
+                    ' Obtener la ruta anterior para eliminar el archivo viejo
+                    Dim oldCoverPath As String = Nothing
+                    Using cmdOld = db.CreateCommand("SELECT cover FROM albumes WHERE idalbum = @id")
+                        cmdOld.Parameters.AddWithValue("@id", albumId)
+                        Dim result As Object = cmdOld.ExecuteScalar()
+                        If result IsNot Nothing AndAlso Not IsDBNull(result) Then
+                            oldCoverPath = result.ToString()
+                        End If
+                    End Using
+
+                    ' Guardar nueva imagen y obtener ruta
+                    Dim newCoverPath As String = SaveBase64Image(albumData("cover").GetString(), "album", albumId)
+                    If newCoverPath IsNot Nothing Then
+                        updates.Add("cover = @cover")
+                        cmd.Parameters.AddWithValue("@cover", newCoverPath)
+
+                        ' Eliminar archivo viejo si existe y es diferente
+                        If oldCoverPath IsNot Nothing AndAlso oldCoverPath <> newCoverPath Then
+                            DeleteImageFile(oldCoverPath)
+                        End If
+                    End If
+                End If
+                If albumData.ContainsKey("price") Then
+                    updates.Add("precio = @precio")
+                    cmd.Parameters.AddWithValue("@precio", albumData("price").GetDecimal())
+                End If
+                If albumData.ContainsKey("releaseDate") Then
+                    updates.Add("fechalanzamiento = @fecha")
+                    cmd.Parameters.AddWithValue("@fecha", Date.Parse(albumData("releaseDate").GetString()))
+                End If
+
+                If updates.Count > 0 Then
+                    cmd.CommandText = cmdText & String.Join(", ", updates) & " WHERE idalbum = @id"
+                    cmd.Parameters.AddWithValue("@id", albumId)
+                    cmd.ExecuteNonQuery()
+                End If
+            End Using
+
+            ' Actualizar colaboradores si están presentes
+            If albumData.ContainsKey("collaborators") Then
+                Using cmd = db.CreateCommand("DELETE FROM autoresalbumes WHERE idalbum = @id AND ft = true")
+                    cmd.Parameters.AddWithValue("@id", albumId)
+                    cmd.ExecuteNonQuery()
+                End Using
+
+                For Each collabElement In albumData("collaborators").EnumerateArray()
+                    Using cmd = db.CreateCommand("INSERT INTO autoresalbumes (idartista, idalbum, ft) VALUES (@idartista, @idalbum, @ft)")
+                        cmd.Parameters.AddWithValue("@idartista", collabElement.GetInt32())
+                        cmd.Parameters.AddWithValue("@idalbum", albumId)
+                        cmd.Parameters.AddWithValue("@ft", True)
+                        cmd.ExecuteNonQuery()
+                    End Using
+                Next
+            End If
+
+            ' Actualizar canciones del álbum si están presentes
+            If albumData.ContainsKey("songs") Then
+                Using cmd = db.CreateCommand("DELETE FROM cancionesalbumes WHERE idalbum = @id")
+                    cmd.Parameters.AddWithValue("@id", albumId)
+                    cmd.ExecuteNonQuery()
+                End Using
+
+                Dim trackNumber As Integer = 1
+                For Each songElement In albumData("songs").EnumerateArray()
+                    Using cmd = db.CreateCommand("INSERT INTO cancionesalbumes (idcancion, idalbum, tracknumber) VALUES (@idcancion, @idalbum, @tracknumber)")
+                        cmd.Parameters.AddWithValue("@idcancion", songElement.GetInt32())
+                        cmd.Parameters.AddWithValue("@idalbum", albumId)
+                        cmd.Parameters.AddWithValue("@tracknumber", trackNumber)
+                        cmd.ExecuteNonQuery()
+                    End Using
+                    trackNumber += 1
+                Next
+            End If
+
+            jsonResponse = ""
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al actualizar el álbum: " & ex.Message)
             statusCode = HttpStatusCode.InternalServerError
         End Try
     End Sub
