@@ -175,6 +175,9 @@ Module Program
                 ElseIf IsNumeric(action) AndAlso request.HttpMethod = "GET" Then
                     getMerch(request, action, jsonResponse, statusCode)
 
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "DELETE" Then
+                    deleteMerch(request, action, jsonResponse, statusCode, userId.Value)
+
                 Else
                     ' Ruta no encontrada
                     jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
@@ -1462,6 +1465,23 @@ Module Program
 
         Catch ex As Exception
             jsonResponse = GenerateErrorResponse("500", "Error al obtener merchandising: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub deleteMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim merchId = ValidateNumericId(action, "merchandising", jsonResponse, statusCode)
+            If Not merchId.HasValue Then Return
+
+            ' Obtener la ruta de la imagen antes de eliminar el registro
+            Dim coverPath = GetImagePathBeforeDelete("merch", "cover", "idmerch", merchId.Value)
+
+            ' Eliminar merchandising (las relaciones se eliminan en cascada)
+            DeleteRecordWithImage("merch", "idmerch", merchId.Value, coverPath, "Merchandising", jsonResponse, statusCode)
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al eliminar el merchandising: " & ex.Message)
             statusCode = HttpStatusCode.InternalServerError
         End Try
     End Sub
