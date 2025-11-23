@@ -124,14 +124,23 @@ Module Program
                 If action = "upload" AndAlso request.HttpMethod = "POST" Then
                     uploadSong(request, action, jsonResponse, statusCode, userId.Value)
 
+                ElseIf action = "search" AndAlso request.HttpMethod = "GET" Then
+                    searchSong(request, action, jsonResponse, statusCode)
+
+                ElseIf action = "list" AndAlso request.HttpMethod = "GET" Then
+                    listSongs(request, action, jsonResponse, statusCode)
+
+                ElseIf action = "filter" AndAlso request.HttpMethod = "GET" Then
+                    filterSongs(request, action, jsonResponse, statusCode)
+
                 ElseIf IsNumeric(action) AndAlso request.HttpMethod = "GET" Then
                     getSong(request, action, jsonResponse, statusCode)
 
-                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "PATCH" Then
-                    updateSong(request, action, jsonResponse, statusCode, userId.Value)
-
                 ElseIf IsNumeric(action) AndAlso request.HttpMethod = "DELETE" Then
                     deleteSong(request, action, jsonResponse, statusCode, userId.Value)
+
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "PATCH" Then
+                    updateSong(request, action, jsonResponse, statusCode, userId.Value)
 
                 Else
                     ' Ruta no encontrada
@@ -157,11 +166,11 @@ Module Program
                 ElseIf IsNumeric(action) AndAlso request.HttpMethod = "GET" Then
                     getAlbum(request, action, jsonResponse, statusCode)
 
-                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "PATCH" Then
-                    updateAlbum(request, action, jsonResponse, statusCode, userId.Value)
-
                 ElseIf IsNumeric(action) AndAlso request.HttpMethod = "DELETE" Then
                     deleteAlbum(request, action, jsonResponse, statusCode, userId.Value)
+
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "PATCH" Then
+                    updateAlbum(request, action, jsonResponse, statusCode, userId.Value)
 
                 Else
                     ' Ruta no encontrada
@@ -175,11 +184,11 @@ Module Program
                 If action = "upload" AndAlso request.HttpMethod = "POST" Then
                     uploadMerch(request, action, jsonResponse, statusCode, userId.Value)
 
-                ElseIf action = "list" AndAlso request.HttpMethod = "GET" Then
-                    listMerch(request, action, jsonResponse, statusCode)
-
                 ElseIf action = "search" AndAlso request.HttpMethod = "GET" Then
                     searchMerch(request, action, jsonResponse, statusCode)
+
+                ElseIf action = "list" AndAlso request.HttpMethod = "GET" Then
+                    listMerch(request, action, jsonResponse, statusCode)
 
                 ElseIf action = "filter" AndAlso request.HttpMethod = "GET" Then
                     filterMerch(request, action, jsonResponse, statusCode)
@@ -202,14 +211,37 @@ Module Program
 
             ElseIf resource = "artist" Then
 
-                ' Ruta no encontrada
-                jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
-                statusCode = HttpStatusCode.NotFound
+                If action = "upload" AndAlso request.HttpMethod = "POST" Then
+                    uploadArtist(request, action, jsonResponse, statusCode, userId.Value)
+
+                ElseIf action = "search" AndAlso request.HttpMethod = "GET" Then
+                    searchArtist(request, action, jsonResponse, statusCode)
+
+                ElseIf action = "list" AndAlso request.HttpMethod = "GET" Then
+                    listArtists(request, action, jsonResponse, statusCode)
+
+                ElseIf action = "filter" AndAlso request.HttpMethod = "GET" Then
+                    filterArtists(request, action, jsonResponse, statusCode)
+
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "GET" Then
+                    getArtist(request, action, jsonResponse, statusCode)
+
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "DELETE" Then
+                    deleteArtist(request, action, jsonResponse, statusCode, userId.Value)
+
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "PATCH" Then
+                    updateArtist(request, action, jsonResponse, statusCode, userId.Value)
+
+                Else
+                    ' Ruta no encontrada
+                    jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
+                    statusCode = HttpStatusCode.NotFound
+                End If
 
 
             ElseIf resource = "genres" AndAlso request.HttpMethod = "GET" Then
                 ' Endpoint /genres - no requiere autenticación
-                ' getGenres(request, action, jsonResponse, statusCode) ' Eliminado
+                getGenres(request, action, jsonResponse, statusCode)
 
 
             ElseIf request.Url.AbsolutePath = "/" Then
@@ -316,6 +348,7 @@ Module Program
     ' LÓGICA DE NEGOCIO
     '==========================================================================
 
+
     ' Función auxiliar para obtener el ID del artista asociado a un usuario
     Function GetArtistIdByUserId(userId As Integer) As Integer?
         Try
@@ -332,7 +365,6 @@ Module Program
         Return Nothing
     End Function
 
-
     '==========================================================================
     ' FUNCIONES AUXILIARES COMUNES
     '==========================================================================
@@ -347,23 +379,6 @@ Module Program
             Return Nothing
         End If
         Return Integer.Parse(action)
-    End Function
-
-
-    ''' <summary>
-    ''' Recupera una lista de IDs desde una query SQL
-    ''' </summary>
-    Function GetIdList(query As String, paramName As String, paramValue As Integer) As List(Of Integer)
-        Dim results As New List(Of Integer)
-        Using cmd = db.CreateCommand(query)
-            cmd.Parameters.AddWithValue(paramName, paramValue)
-            Using reader = cmd.ExecuteReader()
-                While reader.Read()
-                    results.Add(reader.GetInt32(0))
-                End While
-            End Using
-        End Using
-        Return results
     End Function
 
     ''' <summary>
@@ -386,91 +401,20 @@ Module Program
         Return collaborators
     End Function
 
-    ' Función auxiliar para obtener datos completos de una canción
-    Function GetSongData(songId As Integer) As Dictionary(Of String, Object)
-        Try
-            Dim schema As New Dictionary(Of String, Object) From {
-                {"songId", songId},
-                {"title", Nothing},
-                {"artistId", Nothing},
-                {"collaborators", Nothing},
-                {"releaseDate", Nothing},
-                {"description", Nothing},
-                {"duration", Nothing},
-                {"genres", Nothing},
-                {"cover", Nothing},
-                {"price", Nothing},
-                {"albumId", Nothing},
-                {"trackId", Nothing},
-                {"albumOrder", Nothing},
-                {"linked_albums", Nothing}
-            }
-
-            ' Recuperar datos básicos
-            Using cmd = db.CreateCommand("SELECT titulo, descripcion, cover, duracion, fechalanzamiento, precio, track, albumog FROM canciones WHERE idcancion = @id")
-                cmd.Parameters.AddWithValue("@id", songId)
-                Using reader = cmd.ExecuteReader()
-                    If reader.HasRows Then
-                        While reader.Read()
-                            schema("title") = reader.GetString(0)
-                            schema("description") = If(reader.IsDBNull(1), Nothing, reader.GetString(1))
-                            schema("cover") = GetImagePath(reader("cover"))
-                            schema("duration") = reader.GetInt32(3).ToString()
-                            schema("releaseDate") = reader.GetDateTime(4).ToString("yyyy-MM-dd")
-                            schema("price") = reader.GetDecimal(5).ToString()
-                            schema("trackId") = reader.GetInt32(6).ToString()
-                            schema("albumId") = If(reader.IsDBNull(7), Nothing, CType(reader.GetInt32(7), Object))
-                        End While
-                    Else
-                        Return Nothing
-                    End If
-                End Using
+    ''' <summary>
+    ''' Recupera una lista de IDs desde una query SQL
+    ''' </summary>
+    Function GetIdList(query As String, paramName As String, paramValue As Integer) As List(Of Integer)
+        Dim results As New List(Of Integer)
+        Using cmd = db.CreateCommand(query)
+            cmd.Parameters.AddWithValue(paramName, paramValue)
+            Using reader = cmd.ExecuteReader()
+                While reader.Read()
+                    results.Add(reader.GetInt32(0))
+                End While
             End Using
-
-            ' Recuperar autor y colaboradores
-            Dim artistId As String = Nothing
-            Dim collaborators = GetArtistCollaborators("autorescanciones", "idcancion", songId, artistId)
-            schema("artistId") = artistId
-            schema("collaborators") = collaborators
-
-            ' Recuperar géneros
-            Dim genres As New List(Of String)
-            Dim genreIds = GetIdList("SELECT idgenero FROM generoscanciones WHERE idcancion = @id", "@id", songId)
-            For Each genreId In genreIds
-                genres.Add(genreId.ToString())
-            Next
-            schema("genres") = genres
-
-            ' Recuperar albumOrder del álbum original (si existe)
-            If schema("albumId") IsNot Nothing Then
-                Using cmd = db.CreateCommand("SELECT tracknumber FROM cancionesalbumes WHERE idcancion = @id AND idalbum = @albumog")
-                    cmd.Parameters.AddWithValue("@id", songId)
-                    cmd.Parameters.AddWithValue("@albumog", CInt(schema("albumId")))
-                    Using reader = cmd.ExecuteReader()
-                        If reader.Read() Then
-                            schema("albumOrder") = reader.GetInt32(0)
-                        End If
-                    End Using
-                End Using
-            End If
-
-            ' Recuperar álbumes enlazados (linked_albums)
-            Dim linkedAlbums As New List(Of Integer)
-            Dim albumOgId As Object = schema("albumId")
-            Dim allLinkedAlbums = GetIdList("SELECT idalbum FROM cancionesalbumes WHERE idcancion = @id", "@id", songId)
-            For Each linkedAlbumId In allLinkedAlbums
-                If albumOgId Is Nothing OrElse linkedAlbumId <> CInt(albumOgId) Then
-                    linkedAlbums.Add(linkedAlbumId)
-                End If
-            Next
-            schema("linked_albums") = linkedAlbums
-
-            Return schema
-
-        Catch ex As Exception
-            Console.WriteLine($"Error al obtener datos de canción {songId}: {ex.Message}")
-            Return Nothing
-        End Try
+        End Using
+        Return results
     End Function
 
     ''' <summary>
@@ -702,6 +646,316 @@ Module Program
         End Try
     End Sub
 
+    Sub searchSong(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            ' Obtener parámetro de búsqueda
+            Dim query As String = request.QueryString("q")
+            If String.IsNullOrEmpty(query) Then
+                jsonResponse = GenerateErrorResponse("400", "Parámetro de búsqueda 'q' requerido")
+                statusCode = HttpStatusCode.BadRequest
+                Return
+            End If
+
+            ' Buscar canciones por título (puede extenderse a otros campos)
+            Dim results As New List(Of Dictionary(Of String, Object))
+
+            Using cmd = db.CreateCommand("SELECT idcancion FROM canciones WHERE LOWER(titulo) LIKE LOWER(@query)")
+                cmd.Parameters.AddWithValue("@query", "%" & query & "%")
+                Using reader = cmd.ExecuteReader()
+                    While reader.Read()
+                        results.Add(New Dictionary(Of String, Object) From {{"songId", reader.GetInt32(0)}})
+                    End While
+                End Using
+            End Using
+
+            jsonResponse = ConvertToJson(results)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al buscar canciones: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub listSongs(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            ' Obtener parámetro de lista de IDs
+            Dim idsParam As String = request.QueryString("ids")
+            If String.IsNullOrEmpty(idsParam) Then
+                jsonResponse = GenerateErrorResponse("400", "Parámetro 'ids' requerido")
+                statusCode = HttpStatusCode.BadRequest
+                Return
+            End If
+
+            ' Dividir los IDs por comas
+            Dim idStrings As String() = idsParam.Split(","c)
+            Dim songIds As New List(Of Integer)
+
+            ' Parsear y validar los IDs
+            For Each idStr In idStrings
+                Dim songId As Integer
+                If Integer.TryParse(idStr.Trim(), songId) Then
+                    songIds.Add(songId)
+                Else
+                    jsonResponse = GenerateErrorResponse("400", "ID inválido: " & idStr)
+                    statusCode = HttpStatusCode.BadRequest
+                    Return
+                End If
+            Next
+
+            ' Obtener los datos de todas las canciones
+            Dim results As New List(Of Dictionary(Of String, Object))
+
+            For Each songId In songIds
+                Dim songData As Dictionary(Of String, Object) = GetSongData(songId)
+                If songData IsNot Nothing Then
+                    results.Add(songData)
+                End If
+            Next
+
+            jsonResponse = ConvertToJson(results)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al obtener canciones: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub filterSongs(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            ' Obtener parámetros de filtro
+            Dim genresParam As String = request.QueryString("genres")
+            Dim artistsParam As String = request.QueryString("artists")
+            Dim orderParam As String = request.QueryString("order")
+            Dim directionParam As String = request.QueryString("direction")
+            Dim pageParam As String = request.QueryString("page")
+
+            ' Límite fijo de 9 elementos por página
+            Const pageLimit As Integer = 9
+
+            ' Parsear página (por defecto 1)
+            Dim pageNumber As Integer = 1
+            If Not String.IsNullOrEmpty(pageParam) Then
+                Integer.TryParse(pageParam, pageNumber)
+                If pageNumber < 1 Then pageNumber = 1
+            End If
+
+            ' Calcular OFFSET
+            Dim offset As Integer = (pageNumber - 1) * pageLimit
+
+            ' Parsear géneros
+            Dim genreIds As New List(Of Integer)
+            If Not String.IsNullOrEmpty(genresParam) Then
+                For Each genreStr In genresParam.Split(","c)
+                    Dim genreId As Integer
+                    If Integer.TryParse(genreStr.Trim(), genreId) Then
+                        genreIds.Add(genreId)
+                    End If
+                Next
+            End If
+
+            ' Parsear artistas
+            Dim artistIds As New List(Of Integer)
+            If Not String.IsNullOrEmpty(artistsParam) Then
+                For Each artistStr In artistsParam.Split(","c)
+                    Dim artistId As Integer
+                    If Integer.TryParse(artistStr.Trim(), artistId) Then
+                        artistIds.Add(artistId)
+                    End If
+                Next
+            End If
+
+            ' Construir query SQL
+            Dim orderField As String = "c.idcancion"
+
+            ' Determinar campo de ordenamiento
+            If Not String.IsNullOrEmpty(orderParam) Then
+                If orderParam.ToLower() = "date" Then
+                    orderField = "c.fechalanzamiento"
+                ElseIf orderParam.ToLower() = "name" Then
+                    orderField = "c.titulo"
+                End If
+            End If
+
+            ' SELECT con el campo de ordenamiento para evitar error con DISTINCT
+            Dim sqlQuery As String = $"SELECT DISTINCT c.idcancion, {orderField} FROM canciones c "
+            Dim whereClauses As New List(Of String)
+
+            ' Filtro por géneros
+            If genreIds.Count > 0 Then
+                sqlQuery &= "INNER JOIN generoscanciones gc ON c.idcancion = gc.idcancion "
+                whereClauses.Add("gc.idgenero IN (" & String.Join(",", genreIds) & ")")
+            End If
+
+            ' Filtro por artistas
+            If artistIds.Count > 0 Then
+                sqlQuery &= "INNER JOIN autorescanciones ac ON c.idcancion = ac.idcancion "
+                whereClauses.Add("ac.idartista IN (" & String.Join(",", artistIds) & ")")
+            End If
+
+            ' Agregar WHERE clause
+            If whereClauses.Count > 0 Then
+                sqlQuery &= "WHERE " & String.Join(" AND ", whereClauses) & " "
+            End If
+
+            ' Agregar ORDER BY
+            sqlQuery &= $"ORDER BY {orderField} "
+
+            ' Dirección del ordenamiento
+            If Not String.IsNullOrEmpty(directionParam) AndAlso directionParam.ToLower() = "desc" Then
+                sqlQuery &= "DESC"
+            Else
+                sqlQuery &= "ASC"
+            End If
+
+            ' Añadir paginación
+            sqlQuery &= $" LIMIT {pageLimit} OFFSET {offset}"
+
+            ' Ejecutar query
+            Dim results As New List(Of Integer)
+            Using cmd = db.CreateCommand(sqlQuery)
+                Using reader = cmd.ExecuteReader()
+                    While reader.Read()
+                        results.Add(reader.GetInt32(0))
+                    End While
+                End Using
+            End Using
+
+            jsonResponse = ConvertToJson(results)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al filtrar canciones: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    ' Función auxiliar para obtener datos completos de una canción
+    Function GetSongData(songId As Integer) As Dictionary(Of String, Object)
+        Try
+            Dim schema As New Dictionary(Of String, Object) From {
+                {"songId", songId},
+                {"title", Nothing},
+                {"artistId", Nothing},
+                {"collaborators", Nothing},
+                {"releaseDate", Nothing},
+                {"description", Nothing},
+                {"duration", Nothing},
+                {"genres", Nothing},
+                {"cover", Nothing},
+                {"price", Nothing},
+                {"albumId", Nothing},
+                {"trackId", Nothing},
+                {"albumOrder", Nothing},
+                {"linked_albums", Nothing}
+            }
+
+            ' Recuperar datos básicos
+            Using cmd = db.CreateCommand("SELECT titulo, descripcion, cover, duracion, fechalanzamiento, precio, track, albumog FROM canciones WHERE idcancion = @id")
+                cmd.Parameters.AddWithValue("@id", songId)
+                Using reader = cmd.ExecuteReader()
+                    If reader.HasRows Then
+                        While reader.Read()
+                            schema("title") = reader.GetString(0)
+                            schema("description") = If(reader.IsDBNull(1), Nothing, reader.GetString(1))
+                            schema("cover") = GetImagePath(reader("cover"))
+                            schema("duration") = reader.GetInt32(3).ToString()
+                            schema("releaseDate") = reader.GetDateTime(4).ToString("yyyy-MM-dd")
+                            schema("price") = reader.GetDecimal(5).ToString()
+                            schema("trackId") = reader.GetInt32(6).ToString()
+                            schema("albumId") = If(reader.IsDBNull(7), Nothing, CType(reader.GetInt32(7), Object))
+                        End While
+                    Else
+                        Return Nothing
+                    End If
+                End Using
+            End Using
+
+            ' Recuperar autor y colaboradores
+            Dim artistId As String = Nothing
+            Dim collaborators = GetArtistCollaborators("autorescanciones", "idcancion", songId, artistId)
+            schema("artistId") = artistId
+            schema("collaborators") = collaborators
+
+            ' Recuperar géneros
+            Dim genres As New List(Of String)
+            Dim genreIds = GetIdList("SELECT idgenero FROM generoscanciones WHERE idcancion = @id", "@id", songId)
+            For Each genreId In genreIds
+                genres.Add(genreId.ToString())
+            Next
+            schema("genres") = genres
+
+            ' Recuperar albumOrder del álbum original (si existe)
+            If schema("albumId") IsNot Nothing Then
+                Using cmd = db.CreateCommand("SELECT tracknumber FROM cancionesalbumes WHERE idcancion = @id AND idalbum = @albumog")
+                    cmd.Parameters.AddWithValue("@id", songId)
+                    cmd.Parameters.AddWithValue("@albumog", CInt(schema("albumId")))
+                    Using reader = cmd.ExecuteReader()
+                        If reader.Read() Then
+                            schema("albumOrder") = reader.GetInt32(0)
+                        End If
+                    End Using
+                End Using
+            End If
+
+            ' Recuperar álbumes enlazados (linked_albums)
+            Dim linkedAlbums As New List(Of Integer)
+            Dim albumOgId As Object = schema("albumId")
+            Dim allLinkedAlbums = GetIdList("SELECT idalbum FROM cancionesalbumes WHERE idcancion = @id", "@id", songId)
+            For Each linkedAlbumId In allLinkedAlbums
+                If albumOgId Is Nothing OrElse linkedAlbumId <> CInt(albumOgId) Then
+                    linkedAlbums.Add(linkedAlbumId)
+                End If
+            Next
+            schema("linked_albums") = linkedAlbums
+
+            Return schema
+
+        Catch ex As Exception
+            Console.WriteLine($"Error al obtener datos de canción {songId}: {ex.Message}")
+            Return Nothing
+        End Try
+    End Function
+
+    Sub getSong(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            Dim songId = ValidateNumericId(action, "canción", jsonResponse, statusCode)
+            If Not songId.HasValue Then Return
+
+            Dim songData = GetSongData(songId.Value)
+            If songData Is Nothing Then
+                jsonResponse = ""
+                statusCode = HttpStatusCode.NotFound
+                Return
+            End If
+
+            jsonResponse = ConvertToJson(songData)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al obtener datos de canción: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub deleteSong(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim songId = ValidateNumericId(action, "canción", jsonResponse, statusCode)
+            If Not songId.HasValue Then Return
+
+            ' Obtener la ruta de la imagen antes de eliminar el registro
+            Dim coverPath = GetImagePathBeforeDelete("canciones", "cover", "idcancion", songId.Value)
+
+            ' Eliminar canción (las relaciones se eliminan en cascada)
+            DeleteRecordWithImage("canciones", "idcancion", songId.Value, coverPath, "Canción", jsonResponse, statusCode)
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al eliminar la canción: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
     Sub updateSong(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
         Try
             Dim songId = ValidateNumericId(action, "canción", jsonResponse, statusCode)
@@ -854,44 +1108,9 @@ Module Program
         End Try
     End Sub
 
-    Sub deleteSong(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
-        Try
-            Dim songId = ValidateNumericId(action, "canción", jsonResponse, statusCode)
-            If Not songId.HasValue Then Return
-
-            ' Obtener la ruta de la imagen antes de eliminar el registro
-            Dim coverPath = GetImagePathBeforeDelete("canciones", "cover", "idcancion", songId.Value)
-
-            ' Eliminar canción (las relaciones se eliminan en cascada)
-            DeleteRecordWithImage("canciones", "idcancion", songId.Value, coverPath, "Canción", jsonResponse, statusCode)
-
-        Catch ex As Exception
-            jsonResponse = GenerateErrorResponse("500", "Error al eliminar la canción: " & ex.Message)
-            statusCode = HttpStatusCode.InternalServerError
-        End Try
-    End Sub
-
-    Sub getSong(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
-        Try
-            Dim songId = ValidateNumericId(action, "canción", jsonResponse, statusCode)
-            If Not songId.HasValue Then Return
-
-            Dim songData = GetSongData(songId.Value)
-            If songData Is Nothing Then
-                jsonResponse = ""
-                statusCode = HttpStatusCode.NotFound
-                Return
-            End If
-
-            jsonResponse = ConvertToJson(songData)
-            statusCode = HttpStatusCode.OK
-
-        Catch ex As Exception
-            jsonResponse = GenerateErrorResponse("500", "Error al obtener datos de canción: " & ex.Message)
-            statusCode = HttpStatusCode.InternalServerError
-        End Try
-    End Sub
-
+    '==========================================================================
+    ' MÉTODOS PARA ALBUM
+    '==========================================================================
     Sub uploadAlbum(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
         Try
             Dim body As String
@@ -1281,6 +1500,30 @@ Module Program
         End Try
     End Sub
 
+    Sub deleteAlbum(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim albumId = ValidateNumericId(action, "álbum", jsonResponse, statusCode)
+            If Not albumId.HasValue Then Return
+
+            ' Obtener la ruta de la imagen antes de eliminar el registro
+            Dim coverPath = GetImagePathBeforeDelete("albumes", "cover", "idalbum", albumId.Value)
+
+            ' Antes de eliminar el álbum, poner albumog a NULL en todas las canciones
+            ' que tengan este álbum como álbum original (se convierten en singles)
+            Using cmd = db.CreateCommand("UPDATE canciones SET albumog = NULL WHERE albumog = @id")
+                cmd.Parameters.AddWithValue("@id", albumId.Value)
+                cmd.ExecuteNonQuery()
+            End Using
+
+            ' Eliminar álbum (las relaciones en cancionesalbumes se eliminan en cascada)
+            DeleteRecordWithImage("albumes", "idalbum", albumId.Value, coverPath, "Álbum", jsonResponse, statusCode)
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al eliminar el álbum: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
     Sub updateAlbum(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
         Try
             Dim albumId = ValidateNumericId(action, "álbum", jsonResponse, statusCode)
@@ -1419,30 +1662,9 @@ Module Program
         End Try
     End Sub
 
-    Sub deleteAlbum(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
-        Try
-            Dim albumId = ValidateNumericId(action, "álbum", jsonResponse, statusCode)
-            If Not albumId.HasValue Then Return
-
-            ' Obtener la ruta de la imagen antes de eliminar el registro
-            Dim coverPath = GetImagePathBeforeDelete("albumes", "cover", "idalbum", albumId.Value)
-
-            ' Antes de eliminar el álbum, poner albumog a NULL en todas las canciones
-            ' que tengan este álbum como álbum original (se convierten en singles)
-            Using cmd = db.CreateCommand("UPDATE canciones SET albumog = NULL WHERE albumog = @id")
-                cmd.Parameters.AddWithValue("@id", albumId.Value)
-                cmd.ExecuteNonQuery()
-            End Using
-
-            ' Eliminar álbum (las relaciones en cancionesalbumes se eliminan en cascada)
-            DeleteRecordWithImage("albumes", "idalbum", albumId.Value, coverPath, "Álbum", jsonResponse, statusCode)
-
-        Catch ex As Exception
-            jsonResponse = GenerateErrorResponse("500", "Error al eliminar el álbum: " & ex.Message)
-            statusCode = HttpStatusCode.InternalServerError
-        End Try
-    End Sub
-
+    '==========================================================================
+    ' MÉTODOS PARA MERCH
+    '==========================================================================
     Sub uploadMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
         Try
             Dim body As String
@@ -1535,71 +1757,34 @@ Module Program
         End Try
     End Sub
 
-    Sub getMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+    Sub searchMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
         Try
-            Dim merchId = ValidateNumericId(action, "merchandising", jsonResponse, statusCode)
-            If Not merchId.HasValue Then Return
-
-            Dim merchData = GetMerchData(merchId.Value)
-            If merchData Is Nothing Then
-                jsonResponse = ""
-                statusCode = HttpStatusCode.NotFound
+            Dim query As String = request.QueryString("q")
+            If String.IsNullOrEmpty(query) Then
+                jsonResponse = GenerateErrorResponse("400", "Parámetro de búsqueda 'q' requerido")
+                statusCode = HttpStatusCode.BadRequest
                 Return
             End If
 
-            jsonResponse = ConvertToJson(merchData)
-            statusCode = HttpStatusCode.OK
+            Dim results As New List(Of Dictionary(Of String, Object))
 
-        Catch ex As Exception
-            jsonResponse = GenerateErrorResponse("500", "Error al obtener el merchandising: " & ex.Message)
-            statusCode = HttpStatusCode.InternalServerError
-        End Try
-    End Sub
-
-    Function GetMerchData(merchId As Integer) As Dictionary(Of String, Object)
-        Try
-            Dim schema As New Dictionary(Of String, Object) From {
-                {"merchId", merchId},
-                {"title", Nothing},
-                {"artistId", Nothing},
-                {"collaborators", Nothing},
-                {"releaseDate", Nothing},
-                {"description", Nothing},
-                {"price", Nothing},
-                {"cover", Nothing}
-            }
-
-            ' Recuperar datos del merchandising
-            Using cmd = db.CreateCommand("SELECT titulo, descripcion, precio, cover, fechaLanzamiento FROM merch WHERE idmerch = @id")
-                cmd.Parameters.AddWithValue("@id", merchId)
+            Using cmd = db.CreateCommand("SELECT idmerch FROM merch WHERE LOWER(titulo) LIKE LOWER(@query)")
+                cmd.Parameters.AddWithValue("@query", "%" & query & "%")
                 Using reader = cmd.ExecuteReader()
-                    If reader.HasRows Then
-                        While reader.Read()
-                            schema("title") = reader.GetString(0)
-                            schema("description") = reader.GetString(1)
-                            schema("price") = reader.GetDecimal(2).ToString()
-                            schema("cover") = GetImagePath(reader("cover"))
-                            schema("releaseDate") = reader.GetDateTime(4).ToString("yyyy-MM-dd")
-                        End While
-                    Else
-                        Return Nothing
-                    End If
+                    While reader.Read()
+                        results.Add(New Dictionary(Of String, Object) From {{"merchId", reader.GetInt32(0)}})
+                    End While
                 End Using
             End Using
 
-            ' Recuperar artista creador y colaboradores
-            Dim artistId As String = Nothing
-            Dim collaborators = GetArtistCollaborators("AutoresMerch", "idmerch", merchId, artistId)
-            schema("artistId") = artistId
-            schema("collaborators") = collaborators
-
-            Return schema
+            jsonResponse = ConvertToJson(results)
+            statusCode = HttpStatusCode.OK
 
         Catch ex As Exception
-            Console.WriteLine($"Error al obtener datos de merchandising {merchId}: {ex.Message}")
-            Return Nothing
+            jsonResponse = GenerateErrorResponse("500", "Error al buscar merchandising: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
         End Try
-    End Function
+    End Sub
 
     Sub listMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
         Try
@@ -1642,35 +1827,6 @@ Module Program
 
         Catch ex As Exception
             jsonResponse = GenerateErrorResponse("500", "Error al obtener merchandising: " & ex.Message)
-            statusCode = HttpStatusCode.InternalServerError
-        End Try
-    End Sub
-
-    Sub searchMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
-        Try
-            Dim query As String = request.QueryString("q")
-            If String.IsNullOrEmpty(query) Then
-                jsonResponse = GenerateErrorResponse("400", "Parámetro de búsqueda 'q' requerido")
-                statusCode = HttpStatusCode.BadRequest
-                Return
-            End If
-
-            Dim results As New List(Of Dictionary(Of String, Object))
-
-            Using cmd = db.CreateCommand("SELECT idmerch FROM merch WHERE LOWER(titulo) LIKE LOWER(@query)")
-                cmd.Parameters.AddWithValue("@query", "%" & query & "%")
-                Using reader = cmd.ExecuteReader()
-                    While reader.Read()
-                        results.Add(New Dictionary(Of String, Object) From {{"merchId", reader.GetInt32(0)}})
-                    End While
-                End Using
-            End Using
-
-            jsonResponse = ConvertToJson(results)
-            statusCode = HttpStatusCode.OK
-
-        Catch ex As Exception
-            jsonResponse = GenerateErrorResponse("500", "Error al buscar merchandising: " & ex.Message)
             statusCode = HttpStatusCode.InternalServerError
         End Try
     End Sub
@@ -1760,6 +1916,73 @@ Module Program
 
         Catch ex As Exception
             jsonResponse = GenerateErrorResponse("500", "Error al filtrar merchandising: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    ' Función auxiliar para obtener datos completos de merchandising
+    Function GetMerchData(merchId As Integer) As Dictionary(Of String, Object)
+        Try
+            Dim schema As New Dictionary(Of String, Object) From {
+                {"merchId", merchId},
+                {"title", Nothing},
+                {"artistId", Nothing},
+                {"collaborators", Nothing},
+                {"releaseDate", Nothing},
+                {"description", Nothing},
+                {"price", Nothing},
+                {"cover", Nothing}
+            }
+
+            ' Recuperar datos del merchandising
+            Using cmd = db.CreateCommand("SELECT titulo, descripcion, precio, cover, fechaLanzamiento FROM merch WHERE idmerch = @id")
+                cmd.Parameters.AddWithValue("@id", merchId)
+                Using reader = cmd.ExecuteReader()
+                    If reader.HasRows Then
+                        While reader.Read()
+                            schema("title") = reader.GetString(0)
+                            schema("description") = reader.GetString(1)
+                            schema("price") = reader.GetDecimal(2).ToString()
+                            schema("cover") = GetImagePath(reader("cover"))
+                            schema("releaseDate") = reader.GetDateTime(4).ToString("yyyy-MM-dd")
+                        End While
+                    Else
+                        Return Nothing
+                    End If
+                End Using
+            End Using
+
+            ' Recuperar artista creador y colaboradores
+            Dim artistId As String = Nothing
+            Dim collaborators = GetArtistCollaborators("AutoresMerch", "idmerch", merchId, artistId)
+            schema("artistId") = artistId
+            schema("collaborators") = collaborators
+
+            Return schema
+
+        Catch ex As Exception
+            Console.WriteLine($"Error al obtener datos de merchandising {merchId}: {ex.Message}")
+            Return Nothing
+        End Try
+    End Function
+
+    Sub getMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            Dim merchId = ValidateNumericId(action, "merchandising", jsonResponse, statusCode)
+            If Not merchId.HasValue Then Return
+
+            Dim merchData = GetMerchData(merchId.Value)
+            If merchData Is Nothing Then
+                jsonResponse = ""
+                statusCode = HttpStatusCode.NotFound
+                Return
+            End If
+
+            jsonResponse = ConvertToJson(merchData)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al obtener el merchandising: " & ex.Message)
             statusCode = HttpStatusCode.InternalServerError
         End Try
     End Sub
@@ -1883,6 +2106,449 @@ Module Program
         End Try
     End Sub
 
+    '==========================================================================
+    ' MÉTODOS PARA ARTIST
+    '==========================================================================
+    Sub uploadArtist(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim body As String
+            Using reader As New StreamReader(request.InputStream, request.ContentEncoding)
+                body = reader.ReadToEnd()
+            End Using
+
+            Dim artistData = JsonSerializer.Deserialize(Of Dictionary(Of String, JsonElement))(body)
+
+            ' Validar campos requeridos (userId ya no es necesario en el body)
+            If Not artistData.ContainsKey("artisticName") OrElse Not artistData.ContainsKey("artisticEmail") Then
+                jsonResponse = GenerateErrorResponse("400", "Faltan campos requeridos")
+                statusCode = HttpStatusCode.BadRequest
+                Return
+            End If
+
+            ' Verificar si el usuario ya tiene un artista asociado
+            Dim existingArtistId As Integer? = GetArtistIdByUserId(userId)
+            If existingArtistId.HasValue Then
+                jsonResponse = GenerateErrorResponse("409", "El usuario ya tiene un artista asociado. No se puede crear más de un artista por usuario.")
+                statusCode = HttpStatusCode.Conflict
+                Return
+            End If
+
+            Dim artisticName As String = artistData("artisticName").GetString()
+            Dim artisticEmail As String = artistData("artisticEmail").GetString()
+            ' userId ya viene como parámetro de la función (del token de autenticación)
+            Dim biography As String = If(artistData.ContainsKey("artisticBiography"), artistData("artisticBiography").GetString(), "")
+            Dim image As String = If(artistData.ContainsKey("artisticImage"), artistData("artisticImage").GetString(), Nothing)
+            Dim socialMediaUrl As String = If(artistData.ContainsKey("socialMediaUrl"), artistData("socialMediaUrl").GetString(), Nothing)
+            Dim registrationDate As String = DateTime.Now.ToString("yyyy-MM-dd")
+
+            ' Insertar artista con imagen por defecto
+            Dim newArtistId As Integer
+            Using cmd = db.CreateCommand("INSERT INTO artistas (nombre, imagen, bio, fechainicio, email, socialmediaurl, userid) VALUES (@nombre, @imagen, @bio, @fecha, @email, @socialmediaurl, @userid) RETURNING idartista")
+                cmd.Parameters.AddWithValue("@nombre", artisticName)
+                cmd.Parameters.AddWithValue("@imagen", "/artist/default.png")
+                cmd.Parameters.AddWithValue("@bio", biography)
+                cmd.Parameters.AddWithValue("@fecha", Date.Parse(registrationDate))
+                cmd.Parameters.AddWithValue("@email", artisticEmail)
+                cmd.Parameters.AddWithValue("@socialmediaurl", If(socialMediaUrl, DBNull.Value))
+                cmd.Parameters.AddWithValue("@userid", userId)
+                newArtistId = CInt(cmd.ExecuteScalar())
+            End Using
+
+            ' Guardar imagen y actualizar con la ruta si se proporciona
+            If image IsNot Nothing Then
+                Dim imagePath As String = SaveBase64Image(image, "artist", newArtistId)
+                If imagePath IsNot Nothing Then
+                    Using cmd = db.CreateCommand("UPDATE artistas SET imagen = @imagen WHERE idartista = @id")
+                        cmd.Parameters.AddWithValue("@imagen", imagePath)
+                        cmd.Parameters.AddWithValue("@id", newArtistId)
+                        cmd.ExecuteNonQuery()
+                    End Using
+                End If
+            End If
+
+            jsonResponse = ConvertToJson(New Dictionary(Of String, Object) From {{"artistId", newArtistId}})
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al crear el artista: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub searchArtist(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            Dim query As String = request.QueryString("q")
+            If String.IsNullOrEmpty(query) Then
+                jsonResponse = GenerateErrorResponse("400", "Parámetro de búsqueda 'q' requerido")
+                statusCode = HttpStatusCode.BadRequest
+                Return
+            End If
+
+            Dim results As New List(Of Dictionary(Of String, Object))
+
+            Using cmd = db.CreateCommand("SELECT idartista FROM artistas WHERE LOWER(nombre) LIKE LOWER(@query)")
+                cmd.Parameters.AddWithValue("@query", "%" & query & "%")
+                Using reader = cmd.ExecuteReader()
+                    While reader.Read()
+                        results.Add(New Dictionary(Of String, Object) From {{"artistId", reader.GetInt32(0)}})
+                    End While
+                End Using
+            End Using
+
+            jsonResponse = ConvertToJson(results)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al buscar artistas: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub listArtists(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            ' Obtener parámetro de lista de IDs
+            Dim idsParam As String = request.QueryString("ids")
+            If String.IsNullOrEmpty(idsParam) Then
+                jsonResponse = GenerateErrorResponse("400", "Parámetro 'ids' requerido")
+                statusCode = HttpStatusCode.BadRequest
+                Return
+            End If
+
+            ' Dividir los IDs por comas
+            Dim idStrings As String() = idsParam.Split(","c)
+            Dim artistIds As New List(Of Integer)
+
+            ' Parsear y validar los IDs
+            For Each idStr In idStrings
+                Dim artistId As Integer
+                If Integer.TryParse(idStr.Trim(), artistId) Then
+                    artistIds.Add(artistId)
+                Else
+                    jsonResponse = GenerateErrorResponse("400", "ID inválido: " & idStr)
+                    statusCode = HttpStatusCode.BadRequest
+                    Return
+                End If
+            Next
+
+            ' Obtener los datos de todos los artistas
+            Dim results As New List(Of Dictionary(Of String, Object))
+
+            For Each artistId In artistIds
+                Dim artistData As Dictionary(Of String, Object) = GetArtistData(artistId)
+                If artistData IsNot Nothing Then
+                    results.Add(artistData)
+                End If
+            Next
+
+            jsonResponse = ConvertToJson(results)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al obtener artistas: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub filterArtists(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            ' Obtener parámetros de filtro
+            Dim genresParam As String = request.QueryString("genres")
+            Dim orderParam As String = request.QueryString("order")
+            Dim directionParam As String = request.QueryString("direction")
+            Dim pageParam As String = request.QueryString("page")
+
+            ' Límite fijo de 9 elementos por página
+            Const pageLimit As Integer = 9
+
+            ' Parsear página (por defecto 1)
+            Dim pageNumber As Integer = 1
+            If Not String.IsNullOrEmpty(pageParam) Then
+                Integer.TryParse(pageParam, pageNumber)
+                If pageNumber < 1 Then pageNumber = 1
+            End If
+
+            ' Calcular OFFSET
+            Dim offset As Integer = (pageNumber - 1) * pageLimit
+
+            ' Parsear géneros
+            Dim genreIds As New List(Of Integer)
+            If Not String.IsNullOrEmpty(genresParam) Then
+                For Each genreStr In genresParam.Split(","c)
+                    Dim genreId As Integer
+                    If Integer.TryParse(genreStr.Trim(), genreId) Then
+                        genreIds.Add(genreId)
+                    End If
+                Next
+            End If
+
+            ' Construir query SQL - buscar artistas que tengan canciones con esos géneros
+            Dim orderField As String = "a.idartista"
+
+            ' Determinar campo de ordenamiento
+            If Not String.IsNullOrEmpty(orderParam) Then
+                If orderParam.ToLower() = "date" Then
+                    orderField = "a.fechainicio"
+                ElseIf orderParam.ToLower() = "name" Then
+                    orderField = "a.nombre"
+                End If
+            End If
+
+            ' SELECT con el campo de ordenamiento para evitar error con DISTINCT
+            Dim sqlQuery As String = ""
+            If genreIds.Count > 0 Then
+                sqlQuery = $"SELECT DISTINCT a.idartista, {orderField} FROM artistas a " &
+                                        "INNER JOIN autorescanciones ac ON a.idartista = ac.idartista " &
+                                        "INNER JOIN generoscanciones gc ON ac.idcancion = gc.idcancion " &
+                                        "WHERE gc.idgenero IN (" & String.Join(",", genreIds) & ") "
+            Else
+                ' Sin filtro de géneros, devolver todos los artistas
+                sqlQuery = $"SELECT a.idartista, {orderField} FROM artistas a "
+            End If
+
+            ' Agregar ORDER BY
+            sqlQuery &= $"ORDER BY {orderField} "
+
+            ' Dirección del ordenamiento
+            If Not String.IsNullOrEmpty(directionParam) AndAlso directionParam.ToLower() = "desc" Then
+                sqlQuery &= "DESC"
+            Else
+                sqlQuery &= "ASC"
+            End If
+
+            ' Añadir paginación solo si se especifica el parámetro page
+            If Not String.IsNullOrEmpty(pageParam) Then
+                sqlQuery &= $" LIMIT {pageLimit} OFFSET {offset}"
+            End If
+
+            ' Ejecutar query
+            Dim results As New List(Of Integer)
+            Using cmd = db.CreateCommand(sqlQuery)
+                Using reader = cmd.ExecuteReader()
+                    While reader.Read()
+                        results.Add(reader.GetInt32(0))
+                    End While
+                End Using
+            End Using
+
+            jsonResponse = ConvertToJson(results)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al filtrar artistas: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    ' Función auxiliar para obtener datos completos de un artista
+    Function GetArtistData(artistId As Integer) As Dictionary(Of String, Object)
+        Try
+            Dim schema As New Dictionary(Of String, Object) From {
+                {"artistId", artistId},
+                {"artisticName", Nothing},
+                {"artisticBiography", Nothing},
+                {"artisticEmail", Nothing},
+                {"artisticImage", Nothing},
+                {"socialMediaUrl", Nothing},
+                {"registrationDate", Nothing},
+                {"userId", Nothing},
+                {"owner_songs", New List(Of Integer)},
+                {"owner_albums", New List(Of Integer)},
+                {"owner_merch", New List(Of Integer)}
+            }
+
+            ' Recuperar datos del artista
+            Using cmd = db.CreateCommand("SELECT nombre, imagen, bio, fechainicio, email, socialmediaurl, userid FROM artistas WHERE idartista = @id")
+                cmd.Parameters.AddWithValue("@id", artistId)
+                Using reader = cmd.ExecuteReader()
+                    If reader.HasRows Then
+                        While reader.Read()
+                            schema("artisticName") = reader.GetString(0)
+                            schema("artisticImage") = GetImagePath(reader("imagen"))
+                            schema("artisticBiography") = reader.GetString(2)
+                            schema("registrationDate") = reader.GetDateTime(3).ToString("yyyy-MM-dd")
+                            schema("artisticEmail") = If(reader.IsDBNull(4), Nothing, reader.GetString(4))
+                            schema("socialMediaUrl") = If(reader.IsDBNull(5), Nothing, reader.GetString(5))
+                            schema("userId") = If(reader.IsDBNull(6), Nothing, CType(reader.GetInt32(6), Object))
+                        End While
+                    Else
+                        Return Nothing
+                    End If
+                End Using
+            End Using
+
+            ' Obtener canciones donde el artista es creador principal (ft=false)
+            schema("owner_songs") = GetIdList("SELECT idcancion FROM autorescanciones WHERE idartista = @id AND ft = false", "@id", artistId)
+
+            ' Obtener álbumes donde el artista es creador principal (ft=false)
+            schema("owner_albums") = GetIdList("SELECT idalbum FROM autoresalbumes WHERE idartista = @id AND ft = false", "@id", artistId)
+
+            ' Obtener merchandising asociado al artista
+            schema("owner_merch") = GetIdList("SELECT idmerch FROM AutoresMerch WHERE idartista = @id", "@id", artistId)
+
+            Return schema
+
+        Catch ex As Exception
+            Console.WriteLine($"Error al obtener datos de artista {artistId}: {ex.Message}")
+            Return Nothing
+        End Try
+    End Function
+
+    Sub getArtist(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            Dim artistId = ValidateNumericId(action, "artista", jsonResponse, statusCode)
+            If Not artistId.HasValue Then Return
+
+            Dim artistData = GetArtistData(artistId.Value)
+            If artistData Is Nothing Then
+                jsonResponse = ""
+                statusCode = HttpStatusCode.NotFound
+                Return
+            End If
+
+            jsonResponse = ConvertToJson(artistData)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al obtener el artista: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub deleteArtist(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim artistId = ValidateNumericId(action, "artista", jsonResponse, statusCode)
+            If Not artistId.HasValue Then Return
+
+            ' Obtener la ruta de la imagen antes de eliminar el registro
+            Dim imagePath = GetImagePathBeforeDelete("artistas", "imagen", "idartista", artistId.Value)
+
+            ' Eliminar artista (las relaciones se eliminan en cascada)
+            DeleteRecordWithImage("artistas", "idartista", artistId.Value, imagePath, "Artista", jsonResponse, statusCode)
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al eliminar el artista: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub updateArtist(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim artistId = ValidateNumericId(action, "artista", jsonResponse, statusCode)
+            If Not artistId.HasValue Then Return
+
+            Dim body As String
+            Using reader As New StreamReader(request.InputStream, request.ContentEncoding)
+                body = reader.ReadToEnd()
+            End Using
+
+            Dim artistData = JsonSerializer.Deserialize(Of Dictionary(Of String, JsonElement))(body)
+
+            ' Construir UPDATE dinámico
+            Dim updates As New List(Of String)
+            Dim cmdText As String = "UPDATE artistas SET "
+
+            Using cmd = db.CreateCommand("")
+                If artistData.ContainsKey("artisticName") Then
+                    updates.Add("nombre = @nombre")
+                    cmd.Parameters.AddWithValue("@nombre", artistData("artisticName").GetString())
+                End If
+                If artistData.ContainsKey("artisticImage") Then
+                    ' Obtener la ruta anterior para eliminar el archivo viejo
+                    Dim oldImagePath As String = Nothing
+                    Using cmdOld = db.CreateCommand("SELECT imagen FROM artistas WHERE idartista = @id")
+                        cmdOld.Parameters.AddWithValue("@id", artistId)
+                        Dim result As Object = cmdOld.ExecuteScalar()
+                        If result IsNot Nothing AndAlso Not IsDBNull(result) Then
+                            oldImagePath = result.ToString()
+                        End If
+                    End Using
+
+                    ' Guardar nueva imagen y obtener ruta
+                    Dim newImagePath As String = SaveBase64Image(artistData("artisticImage").GetString(), "artist", artistId)
+                    If newImagePath IsNot Nothing Then
+                        updates.Add("imagen = @imagen")
+                        cmd.Parameters.AddWithValue("@imagen", newImagePath)
+
+                        ' Eliminar archivo viejo si existe y es diferente
+                        If oldImagePath IsNot Nothing AndAlso oldImagePath <> newImagePath Then
+                            DeleteImageFile(oldImagePath)
+                        End If
+                    End If
+                End If
+                If artistData.ContainsKey("artisticBiography") Then
+                    updates.Add("bio = @bio")
+                    cmd.Parameters.AddWithValue("@bio", artistData("artisticBiography").GetString())
+                End If
+                If artistData.ContainsKey("artisticEmail") Then
+                    updates.Add("email = @email")
+                    cmd.Parameters.AddWithValue("@email", artistData("artisticEmail").GetString())
+                End If
+                If artistData.ContainsKey("socialMediaUrl") Then
+                    updates.Add("socialmediaurl = @socialmediaurl")
+                    cmd.Parameters.AddWithValue("@socialmediaurl", If(artistData("socialMediaUrl").ValueKind = JsonValueKind.Null, DBNull.Value, CType(artistData("socialMediaUrl").GetString(), Object)))
+                End If
+                If artistData.ContainsKey("userId") Then
+                    ' Validar que el nuevo userId no tenga ya un artista asociado (a menos que sea NULL)
+                    If artistData("userId").ValueKind <> JsonValueKind.Null Then
+                        Dim newUserId As Integer = artistData("userId").GetInt32()
+                        Dim existingArtistId As Integer? = GetArtistIdByUserId(newUserId)
+                        
+                        ' Si el userId ya tiene un artista asociado y no es el mismo artista que estamos actualizando
+                        If existingArtistId.HasValue AndAlso existingArtistId.Value <> artistId.Value Then
+                            jsonResponse = GenerateErrorResponse("409", "El usuario especificado ya tiene otro artista asociado. No se puede reasignar.")
+                            statusCode = HttpStatusCode.Conflict
+                            Return
+                        End If
+                    End If
+                    
+                    updates.Add("userid = @userid")
+                    cmd.Parameters.AddWithValue("@userid", If(artistData("userId").ValueKind = JsonValueKind.Null, DBNull.Value, CType(artistData("userId").GetInt32(), Object)))
+                End If
+
+                If updates.Count > 0 Then
+                    cmd.CommandText = cmdText & String.Join(", ", updates) & " WHERE idartista = @id"
+                    cmd.Parameters.AddWithValue("@id", artistId)
+                    cmd.ExecuteNonQuery()
+                End If
+            End Using
+
+            jsonResponse = ""
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al actualizar el artista: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    ' Obtener todos los géneros
+    Sub getGenres(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As HttpStatusCode)
+        Try
+            Dim genresList As New List(Of Dictionary(Of String, Object))
+
+            Using conn As New NpgsqlConnection(connectionString)
+                conn.Open()
+                Using cmd As New NpgsqlCommand("SELECT idgenero, nombre FROM generos ORDER BY nombre", conn)
+                    Using reader As NpgsqlDataReader = cmd.ExecuteReader()
+                        While reader.Read()
+                            Dim genre As New Dictionary(Of String, Object) From {
+                                {"id", reader.GetInt32(0)},
+                                {"name", reader.GetString(1)}
+                            }
+                            genresList.Add(genre)
+                        End While
+                    End Using
+                End Using
+            End Using
+
+            jsonResponse = ConvertToJson(genresList)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al obtener los géneros: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
 
     ' ==========================================================================
     ' FUNCIONES HELPER PARA CONVERSIÓN DE IMÁGENES
