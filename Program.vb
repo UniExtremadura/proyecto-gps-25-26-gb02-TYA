@@ -172,8 +172,20 @@ Module Program
                 ElseIf action = "list" AndAlso request.HttpMethod = "GET" Then
                     listMerch(request, action, jsonResponse, statusCode)
 
+                ElseIf action = "search" AndAlso request.HttpMethod = "GET" Then
+                    searchMerch(request, action, jsonResponse, statusCode)
+
+                ElseIf action = "filter" AndAlso request.HttpMethod = "GET" Then
+                    filterMerch(request, action, jsonResponse, statusCode)
+
                 ElseIf IsNumeric(action) AndAlso request.HttpMethod = "GET" Then
                     getMerch(request, action, jsonResponse, statusCode)
+
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "DELETE" Then
+                    deleteMerch(request, action, jsonResponse, statusCode, userId.Value)
+
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "PATCH" Then
+                    updateMerch(request, action, jsonResponse, statusCode, userId.Value)
 
                 Else
                     ' Ruta no encontrada
@@ -1462,6 +1474,243 @@ Module Program
 
         Catch ex As Exception
             jsonResponse = GenerateErrorResponse("500", "Error al obtener merchandising: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub searchMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            Dim query As String = request.QueryString("q")
+            If String.IsNullOrEmpty(query) Then
+                jsonResponse = GenerateErrorResponse("400", "Parámetro de búsqueda 'q' requerido")
+                statusCode = HttpStatusCode.BadRequest
+                Return
+            End If
+
+            Dim results As New List(Of Dictionary(Of String, Object))
+
+            Using cmd = db.CreateCommand("SELECT idmerch FROM merch WHERE LOWER(titulo) LIKE LOWER(@query)")
+                cmd.Parameters.AddWithValue("@query", "%" & query & "%")
+                Using reader = cmd.ExecuteReader()
+                    While reader.Read()
+                        results.Add(New Dictionary(Of String, Object) From {{"merchId", reader.GetInt32(0)}})
+                    End While
+                End Using
+            End Using
+
+            jsonResponse = ConvertToJson(results)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al buscar merchandising: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub filterMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer)
+        Try
+            ' Obtener parámetros de filtro
+            Dim artistsParam As String = request.QueryString("artists")
+            Dim orderParam As String = request.QueryString("order")
+            Dim directionParam As String = request.QueryString("direction")
+            Dim pageParam As String = request.QueryString("page")
+
+            ' Límite fijo de 9 elementos por página
+            Const pageLimit As Integer = 9
+
+            ' Parsear página (por defecto 1)
+            Dim pageNumber As Integer = 1
+            If Not String.IsNullOrEmpty(pageParam) Then
+                Integer.TryParse(pageParam, pageNumber)
+                If pageNumber < 1 Then pageNumber = 1
+            End If
+
+            ' Calcular OFFSET
+            Dim offset As Integer = (pageNumber - 1) * pageLimit
+
+            ' Parsear artistas
+            Dim artistIds As New List(Of Integer)
+            If Not String.IsNullOrEmpty(artistsParam) Then
+                For Each artistStr In artistsParam.Split(","c)
+                    Dim artistId As Integer
+                    If Integer.TryParse(artistStr.Trim(), artistId) Then
+                        artistIds.Add(artistId)
+                    End If
+                Next
+            End If
+
+            ' Construir query SQL
+            Dim orderField As String = "m.idmerch"
+
+            ' Determinar campo de ordenamiento
+            If Not String.IsNullOrEmpty(orderParam) Then
+                If orderParam.ToLower() = "date" Then
+                    orderField = "m.fechalanzamiento"
+                ElseIf orderParam.ToLower() = "name" Then
+                    orderField = "m.titulo"
+                End If
+            End If
+
+            ' SELECT con el campo de ordenamiento para evitar error con DISTINCT
+            Dim sqlQuery As String = ""
+            If artistIds.Count > 0 Then
+                sqlQuery = $"SELECT DISTINCT m.idmerch, {orderField} FROM merch m " &
+                                        "INNER JOIN AutoresMerch am ON m.idmerch = am.idmerch " &
+                                        "WHERE am.idartista IN (" & String.Join(",", artistIds) & ") "
+            Else
+                ' Sin filtro de artistas, devolver todos
+                sqlQuery = $"SELECT m.idmerch, {orderField} FROM merch m "
+            End If
+
+            ' Agregar ORDER BY
+            sqlQuery &= $"ORDER BY {orderField} "
+
+            ' Dirección del ordenamiento
+            If Not String.IsNullOrEmpty(directionParam) AndAlso directionParam.ToLower() = "desc" Then
+                sqlQuery &= "DESC"
+            Else
+                sqlQuery &= "ASC"
+            End If
+
+            ' Añadir paginación solo si se especifica el parámetro page
+            If Not String.IsNullOrEmpty(pageParam) Then
+                sqlQuery &= $" LIMIT {pageLimit} OFFSET {offset}"
+            End If
+
+            ' Ejecutar query
+            Dim results As New List(Of Integer)
+            Using cmd = db.CreateCommand(sqlQuery)
+                Using reader = cmd.ExecuteReader()
+                    While reader.Read()
+                        results.Add(reader.GetInt32(0))
+                    End While
+                End Using
+            End Using
+
+            jsonResponse = ConvertToJson(results)
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al filtrar merchandising: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub deleteMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim merchId = ValidateNumericId(action, "merchandising", jsonResponse, statusCode)
+            If Not merchId.HasValue Then Return
+
+            ' Obtener la ruta de la imagen antes de eliminar el registro
+            Dim coverPath = GetImagePathBeforeDelete("merch", "cover", "idmerch", merchId.Value)
+
+            ' Eliminar merchandising (las relaciones se eliminan en cascada)
+            DeleteRecordWithImage("merch", "idmerch", merchId.Value, coverPath, "Merchandising", jsonResponse, statusCode)
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al eliminar el merchandising: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub updateMerch(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim merchId = ValidateNumericId(action, "merchandising", jsonResponse, statusCode)
+            If Not merchId.HasValue Then Return
+
+            Dim body As String
+            Using reader As New StreamReader(request.InputStream, request.ContentEncoding)
+                body = reader.ReadToEnd()
+            End Using
+
+            Dim merchData = JsonSerializer.Deserialize(Of Dictionary(Of String, JsonElement))(body)
+
+            ' Validar price si está presente
+            If merchData.ContainsKey("price") Then
+                Dim price As Decimal = merchData("price").GetDecimal()
+                If price <= 0 Then
+                    jsonResponse = GenerateErrorResponse("400", "El precio debe ser un valor positivo")
+                    statusCode = HttpStatusCode.BadRequest
+                    Return
+                End If
+            End If
+
+            ' Construir UPDATE dinámico
+            Dim updates As New List(Of String)
+            Dim cmdText As String = "UPDATE merch SET "
+
+            Using cmd = db.CreateCommand("")
+                If merchData.ContainsKey("title") Then
+                    updates.Add("titulo = @titulo")
+                    cmd.Parameters.AddWithValue("@titulo", merchData("title").GetString())
+                End If
+                If merchData.ContainsKey("description") Then
+                    updates.Add("descripcion = @descripcion")
+                    cmd.Parameters.AddWithValue("@descripcion", merchData("description").GetString())
+                End If
+                If merchData.ContainsKey("price") Then
+                    updates.Add("precio = @precio")
+                    cmd.Parameters.AddWithValue("@precio", merchData("price").GetDecimal())
+                End If
+                If merchData.ContainsKey("cover") Then
+                    ' Obtener la ruta anterior para eliminar el archivo viejo
+                    Dim oldCoverPath As String = Nothing
+                    Using cmdOld = db.CreateCommand("SELECT cover FROM merch WHERE idmerch = @id")
+                        cmdOld.Parameters.AddWithValue("@id", merchId)
+                        Dim result As Object = cmdOld.ExecuteScalar()
+                        If result IsNot Nothing AndAlso Not IsDBNull(result) Then
+                            oldCoverPath = result.ToString()
+                        End If
+                    End Using
+
+                    ' Guardar nueva imagen y obtener ruta
+                    Dim newCoverPath As String = SaveBase64Image(merchData("cover").GetString(), "merch", merchId)
+                    If newCoverPath IsNot Nothing Then
+                        updates.Add("cover = @cover")
+                        cmd.Parameters.AddWithValue("@cover", newCoverPath)
+
+                        ' Eliminar archivo viejo si existe y es diferente
+                        If oldCoverPath IsNot Nothing AndAlso oldCoverPath <> newCoverPath Then
+                            DeleteImageFile(oldCoverPath)
+                        End If
+                    End If
+                End If
+                If merchData.ContainsKey("releaseDate") Then
+                    updates.Add("fechalanzamiento = @fecha")
+                    cmd.Parameters.AddWithValue("@fecha", Date.Parse(merchData("releaseDate").GetString()))
+                End If
+
+                If updates.Count > 0 Then
+                    cmd.CommandText = cmdText & String.Join(", ", updates) & " WHERE idmerch = @id"
+                    cmd.Parameters.AddWithValue("@id", merchId)
+                    cmd.ExecuteNonQuery()
+                End If
+            End Using
+
+            ' Actualizar colaboradores si están presentes
+            If merchData.ContainsKey("collaborators") Then
+                ' Eliminar solo los colaboradores (ft = true), mantener el artista principal (ft = false)
+                Using cmd = db.CreateCommand("DELETE FROM AutoresMerch WHERE idmerch = @id AND ft = true")
+                    cmd.Parameters.AddWithValue("@id", merchId)
+                    cmd.ExecuteNonQuery()
+                End Using
+
+                ' Insertar nuevos colaboradores
+                For Each collabElement In merchData("collaborators").EnumerateArray()
+                    Using cmd = db.CreateCommand("INSERT INTO AutoresMerch (idartista, idmerch, ft) VALUES (@idartista, @idmerch, @ft)")
+                        cmd.Parameters.AddWithValue("@idartista", collabElement.GetInt32())
+                        cmd.Parameters.AddWithValue("@idmerch", merchId)
+                        cmd.Parameters.AddWithValue("@ft", True) ' Es colaborador
+                        cmd.ExecuteNonQuery()
+                    End Using
+                Next
+            End If
+
+            jsonResponse = ""
+            statusCode = HttpStatusCode.OK
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al actualizar el merchandising: " & ex.Message)
             statusCode = HttpStatusCode.InternalServerError
         End Try
     End Sub
