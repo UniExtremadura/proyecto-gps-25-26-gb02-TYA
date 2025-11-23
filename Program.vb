@@ -127,6 +127,9 @@ Module Program
                 ElseIf IsNumeric(action) AndAlso request.HttpMethod = "PATCH" Then
                     updateSong(request, action, jsonResponse, statusCode, userId.Value)
 
+                ElseIf IsNumeric(action) AndAlso request.HttpMethod = "DELETE" Then
+                    deleteSong(request, action, jsonResponse, statusCode, userId.Value)
+
                 Else
                     ' Ruta no encontrada
                     jsonResponse = GenerateErrorResponse("404", "Recurso no encontrado")
@@ -708,6 +711,23 @@ Module Program
 
         Catch ex As Exception
             jsonResponse = GenerateErrorResponse("500", "Error al actualizar la canción: " & ex.Message)
+            statusCode = HttpStatusCode.InternalServerError
+        End Try
+    End Sub
+
+    Sub deleteSong(request As HttpListenerRequest, action As String, ByRef jsonResponse As String, ByRef statusCode As Integer, userId As Integer)
+        Try
+            Dim songId = ValidateNumericId(action, "canción", jsonResponse, statusCode)
+            If Not songId.HasValue Then Return
+
+            ' Obtener la ruta de la imagen antes de eliminar el registro
+            Dim coverPath = GetImagePathBeforeDelete("canciones", "cover", "idcancion", songId.Value)
+
+            ' Eliminar canción (las relaciones se eliminan en cascada)
+            DeleteRecordWithImage("canciones", "idcancion", songId.Value, coverPath, "Canción", jsonResponse, statusCode)
+
+        Catch ex As Exception
+            jsonResponse = GenerateErrorResponse("500", "Error al eliminar la canción: " & ex.Message)
             statusCode = HttpStatusCode.InternalServerError
         End Try
     End Sub
